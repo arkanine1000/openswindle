@@ -55,6 +55,13 @@ class CreateMatchResponse(BaseModel):
     view: PublicMatchView
 
 
+class JoinMatchResponse(BaseModel):
+    match_id: str
+    token: str
+    seat: Seat
+    view: PublicMatchView
+
+
 class MoveRequest(BaseModel):
     move: Move
     table_talk: str | None = None
@@ -148,7 +155,9 @@ async def _npc_take_turns(record: MatchRecord) -> tuple[list[NPCEvent], list[Rou
     assert profile is not None
     events: list[NPCEvent] = []
     reveals: list[RoundReveal] = []
-    susceptibility_on = state.config.channel_susceptibility
+    susceptibility_on = (
+        state.config.opponent_type == "llm" and state.config.channel_susceptibility
+    )
 
     while state.phase == "bidding" and state.round.turn == NPC_SEAT:
         own_hand = state.round.hands[NPC_SEAT]
@@ -243,13 +252,33 @@ async def create_match(request: CreateMatchRequest) -> CreateMatchResponse:
         profile = generator.generate_npc(config.npc_seed)
 
     record = store.add(state, profile)
-    tokens: dict[Seat, str] = {seat: token for token, seat in record.tokens.items()}
     return CreateMatchResponse(
         match_id=state.match_id,
-        tokens=tokens,
+        tokens=store.issued_tokens(record),
         npc_name=profile.name if profile else None,
         npc_bio=profile.bio if profile else None,
         view=_view(state, "a"),
+    )
+
+
+@app.post("/matches/{match_id}/join", response_model=JoinMatchResponse)
+async def join_match(match_id: str) -> JoinMatchResponse:
+    record = _get_record(match_id)
+    if record.state.config.opponent_type != "human":
+        raise HTTPException(
+            status_code=409,
+            detail="Only human-vs-human matches can be joined",
+        )
+    if record.state.phase == "finished":
+        raise HTTPException(status_code=409, detail="Match is already finished")
+    token = store.issue_token(record, "b")
+    if token is None:
+        raise HTTPException(status_code=409, detail="Seat b has already joined")
+    return JoinMatchResponse(
+        match_id=record.state.match_id,
+        token=token,
+        seat="b",
+        view=_view(record.state, "b"),
     )
 
 
@@ -293,7 +322,23 @@ async def submit_move(
             npc_events.extend(events)
             reveals.extend(npc_reveals)
 
+        store.mark_finished(record)
         return MoveResponse(view=_view(state, seat), npc_events=npc_events, reveals=reveals)
+
+
+@app.post("/matches/{match_id}/abort", response_model=MoveResponse)
+async def abort_match(
+    match_id: str, x_player_token: str | None = Header(default=None)
+) -> MoveResponse:
+    record = _get_record(match_id)
+    seat = _authed_seat(record, x_player_token)
+    async with record.lock:
+        if record.state.phase == "finished":
+            raise HTTPException(status_code=409, detail="Match is already finished")
+        reveal = engine.abort_match(record.state)
+        _log_reveal(record, reveal)
+        store.mark_finished(record)
+        return MoveResponse(view=_view(record.state, seat), npc_events=[], reveals=[reveal])
 
 
 @app.get("/matches/{match_id}/npc/profile", response_model=NPCPublicProfile)

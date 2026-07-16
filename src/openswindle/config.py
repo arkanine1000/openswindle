@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     mock_llm: bool = False
     cors_origins: str = "http://localhost:5173"
     llm_max_reprompts: int = 2
+    finished_match_ttl_seconds: int = 3600
+    max_finished_matches: int = 1000
 
     @property
     def cors_origin_list(self) -> list[str]:
