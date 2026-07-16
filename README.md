@@ -86,9 +86,8 @@ scripted triggers that would make it exploitable.
 ## LLM opponents
 
 LLM NPCs make one stateless structured call per decision through
-[LiteLLM](https://docs.litellm.ai) via the
-[Vercel AI Gateway](https://vercel.com/docs/ai-gateway) — any gateway-supported model
-works; the default lives in `OPENSWINDLE_LLM_MODEL`. The response schema is enforced:
+[LiteLLM](https://docs.litellm.ai) via a gateway-compatible model string. The default
+lives in `OPENSWINDLE_LLM_MODEL`. The response schema is enforced:
 `scratchpad` (private reasoning), `move`, and `table_talk` (in-character dialogue).
 Illegal or malformed outputs are rejected and reprompted with the violation explained;
 after the retry budget the deterministic scripted policy takes over (flagged in
@@ -106,8 +105,9 @@ current turn) so provider-side implicit prompt caching hits on every consecutive
 ## Benchmarking & telemetry
 
 - **Channel susceptibility**: whether the human's `table_talk` is included in the LLM
-  payload is a toggle (on by default, forced off for human-vs-human). It measures how
-  easily the model is steered by confident nonsense attached to true claims.
+  payload is a toggle (on by default, forced off for human-vs-human and scripted
+  opponents). It measures how easily the model is steered by confident nonsense
+  attached to true claims.
 - **Deviation pricing**: every NPC decision is compared against the mathematically
   optimal move (highest exact truth probability) and the win-probability delta is
   logged.
@@ -119,10 +119,12 @@ current turn) so provider-side implicit prompt caching hits on every consecutive
 
 | Endpoint | Description |
 |---|---|
-| `POST /matches` | Create a match; returns per-seat player tokens and the initial view |
+| `POST /matches` | Create a match; returns the creator's seat token and the initial view |
+| `POST /matches/{id}/join` | Claim seat `b` in a human-vs-human match |
 | `GET /matches/{id}` | Public view for your seat (header `X-Player-Token`) |
 | `POST /matches/{id}/moves` | Submit a move (+ optional `table_talk`); NPC replies in the same response |
-| `GET /matches/{id}/npc/profile` | NPC name and bio (params/tells stay hidden until the autopsy) |
+| `POST /matches/{id}/abort` | End the match and reveal the current round (header `X-Player-Token`) |
+| `GET /matches/{id}/npc/profile` | NPC name and bio (params stay hidden until the autopsy) |
 | `GET /matches/{id}/autopsy` | Post-match scratchpads, deviation ledger, and NPC reveal |
 | `GET /healthz` | Liveness probe |
 
@@ -143,11 +145,14 @@ curl -s -X POST localhost:8000/matches/<id>/moves \
 | Variable | Default | Purpose |
 |---|---|---|
 | `VERCEL_AI_GATEWAY_API_KEY` | — | Gateway credential for LLM opponents |
-| `OPENSWINDLE_LLM_MODEL` | `vercel_ai_gateway/deepseek/deepseek-v4-flash` | Any LiteLLM model string |
+| `OPENSWINDLE_LLM_MODEL` | configured default | Any LiteLLM model string |
 | `OPENSWINDLE_MOCK_LLM` | `false` | Use the scripted policy instead of an LLM (offline dev/tests) |
 | `OPENSWINDLE_CORS_ORIGINS` | `http://localhost:5173` | Allowed frontend origins (comma-separated) |
+| `OPENSWINDLE_FINISHED_MATCH_TTL_SECONDS` | `3600` | Finished-match retention time in memory |
+| `OPENSWINDLE_MAX_FINISHED_MATCHES` | `1000` | Maximum finished matches retained before pruning oldest |
 
-Match state is held in memory; matches do not survive a server restart.
+Match state is held in memory; matches do not survive a server restart. Finished matches
+are pruned by TTL and by the maximum retained-match cap.
 
 ## License
 

@@ -94,6 +94,30 @@ async def test_full_match_to_autopsy(client):
         assert decision["scratchpad"]
 
 
+async def test_abort_reveals_current_round_and_finishes(client):
+    created = await create_match(client, dice_per_player=2, opponent_type="llm")
+    match_id = created["match_id"]
+    headers = {"X-Player-Token": created["tokens"]["a"]}
+
+    response = await client.post(f"/matches/{match_id}/abort", headers=headers)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["view"]["phase"] == "finished"
+    assert len(body["reveals"]) == 1
+    reveal = body["reveals"][0]
+    for seat in ("a", "b"):
+        assert fairness.verify_commitment(
+            reveal["salts"][seat],
+            reveal["hands"][seat],
+            reveal["commitments"][seat],
+        )
+
+    autopsy = await client.get(f"/matches/{match_id}/autopsy")
+    assert autopsy.status_code == 200
+    second_abort = await client.post(f"/matches/{match_id}/abort", headers=headers)
+    assert second_abort.status_code == 409
+
+
 async def test_auth_required(client):
     created = await create_match(client, dice_per_player=2)
     match_id = created["match_id"]
@@ -123,14 +147,21 @@ async def test_illegal_move_rejected(client):
 
 async def test_human_vs_human_two_tokens_no_npc(client):
     created = await create_match(client, dice_per_player=2, opponent_type="human")
-    assert set(created["tokens"]) == {"a", "b"}
+    assert set(created["tokens"]) == {"a"}
     match_id = created["match_id"]
     profile = await client.get(f"/matches/{match_id}/npc/profile")
     assert profile.status_code == 404
 
-    # Seat b can act after seat a, and no NPC intervenes.
+    joined = await client.post(f"/matches/{match_id}/join")
+    assert joined.status_code == 200
+    joined_body = joined.json()
+    assert joined_body["seat"] == "b"
+    assert joined_body["token"]
+    assert (await client.post(f"/matches/{match_id}/join")).status_code == 409
+
+    # Seat b can act after seat a, but receives its token separately and no NPC intervenes.
     ha = {"X-Player-Token": created["tokens"]["a"]}
-    hb = {"X-Player-Token": created["tokens"]["b"]}
+    hb = {"X-Player-Token": joined_body["token"]}
     r1 = await client.post(
         f"/matches/{match_id}/moves",
         json={"move": {"action": "bid", "bid": {"quantity": 1, "face": 1}}},
@@ -149,10 +180,34 @@ async def test_human_vs_human_two_tokens_no_npc(client):
 async def test_wrong_turn_conflict(client):
     created = await create_match(client, dice_per_player=2, opponent_type="human")
     match_id = created["match_id"]
-    hb = {"X-Player-Token": created["tokens"]["b"]}
+    joined = await client.post(f"/matches/{match_id}/join")
+    hb = {"X-Player-Token": joined.json()["token"]}
     response = await client.post(
         f"/matches/{match_id}/moves",
         json={"move": {"action": "bid", "bid": {"quantity": 1, "face": 1}}},
         headers=hb,
     )
     assert response.status_code == 409
+
+
+async def test_scripted_telemetry_marks_susceptibility_off(client):
+    created = await create_match(client, dice_per_player=2, opponent_type="scripted")
+    match_id = created["match_id"]
+    headers = {"X-Player-Token": created["tokens"]["a"]}
+    response = await client.post(
+        f"/matches/{match_id}/moves",
+        json={
+            "move": {"action": "bid", "bid": {"quantity": 1, "face": 1}},
+            "table_talk": "please believe me",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+    await client.post(f"/matches/{match_id}/abort", headers=headers)
+    autopsy = await client.get(f"/matches/{match_id}/autopsy")
+    assert autopsy.status_code == 200
+    decisions = autopsy.json()["decisions"]
+    assert decisions
+    assert all(not decision["susceptibility_on"] for decision in decisions)
+    assert all(decision["human_table_talk_seen"] is None for decision in decisions)
