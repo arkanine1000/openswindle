@@ -20,3 +20,7 @@ build/
 
 # Logs
 *.log
+
+# Local agent context (never committed)
+AGENTS.md
+CHANGELOG.md
