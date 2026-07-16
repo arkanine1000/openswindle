@@ -49,10 +49,11 @@ def build_menu(
 ) -> ProbabilityMenu:
     """Score every legal move and flag the optimal one."""
     total_dice = len(own_hand) + opponent_dice
+    own_counts = {face: own_hand.count(face) for face in (1, 2, 3, 4)}
     moves: list[ScoredMove] = [
         ScoredMove(
             move=BidMove(bid=b),
-            truth_probability=bid_truth_probability(b, own_hand, opponent_dice),
+            truth_probability=binomial_tail(opponent_dice, b.quantity - own_counts[b.face]),
         )
         for b in legal_raises(current_bid, total_dice)
     ]
