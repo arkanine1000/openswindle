@@ -74,10 +74,10 @@ def generate_npc(seed: str) -> NPCProfile:
 
     # Parameters first.
     params = NPCParams(
-        deception=round(rng.random(), 3),
-        skepticism=round(rng.random(), 3),
-        aggression=round(rng.random(), 3),
-        chattiness=round(rng.random(), 3),
+        deception=round(rng.random(), 1),
+        skepticism=round(rng.random(), 1),
+        aggression=round(rng.random(), 1),
+        chattiness=round(rng.random(), 1),
     )
 
     # Planted tells: 1-2 persistent behaviors.
