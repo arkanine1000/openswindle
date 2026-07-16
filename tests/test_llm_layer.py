@@ -39,8 +39,12 @@ def _response(content: str, prompt: int = 100, cached: int = 0, completion: int 
 
 @pytest.fixture
 def game(monkeypatch):
+    # A neutral model name keeps JSON mode on (the real default model is on
+    # the seeded json_mode_unsupported_models deny-list).
     monkeypatch.setattr(
-        llm, "get_settings", lambda: Settings(mock_llm=False, llm_max_reprompts=2)
+        llm,
+        "get_settings",
+        lambda: Settings(mock_llm=False, llm_max_reprompts=2, llm_model="test/model"),
     )
     state = engine.create_match(MatchConfig(dice_per_player=3, opponent_type="llm"))
     engine.apply_move(state, "a", BidMove(bid=Bid(quantity=2, face=3)), HUMAN_TALK)
@@ -157,6 +161,40 @@ async def test_json_mode_rejection_retries_without_it(monkeypatch, game):
         assert "response_format" not in calls[1]
     finally:
         llm._json_mode_unsupported.clear()
+
+
+async def test_seeded_deny_list_skips_json_mode_entirely(monkeypatch, game):
+    monkeypatch.setattr(
+        llm,
+        "get_settings",
+        lambda: Settings(
+            mock_llm=False,
+            llm_max_reprompts=2,
+            llm_model="test/model",
+            json_mode_unsupported_models="other/model, test/model",
+        ),
+    )
+    captured = _fake_provider(monkeypatch, [_response(GOOD)])
+    outcome = await _decide(game)
+    assert not outcome.fallback
+    assert len(captured) == 1
+    assert "response_format" not in captured[0]  # no burned probe call
+
+
+async def test_extra_body_is_forwarded(monkeypatch, game):
+    monkeypatch.setattr(
+        llm,
+        "get_settings",
+        lambda: Settings(
+            mock_llm=False,
+            llm_max_reprompts=2,
+            llm_model="test/model",
+            llm_extra_body='{"thinking": {"type": "disabled"}}',
+        ),
+    )
+    captured = _fake_provider(monkeypatch, [_response(GOOD)])
+    await _decide(game)
+    assert captured[0]["extra_body"] == {"thinking": {"type": "disabled"}}
 
 
 async def test_mock_mode_never_touches_the_provider(monkeypatch, game):

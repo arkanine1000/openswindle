@@ -219,7 +219,13 @@ async def decide(
             "messages": messages,
             "temperature": 1,
         }
-        if settings.llm_model not in _json_mode_unsupported:
+        if settings.llm_extra_body_dict:
+            request["extra_body"] = settings.llm_extra_body_dict
+        json_mode_ok = (
+            settings.llm_model not in _json_mode_unsupported
+            and settings.llm_model not in settings.json_mode_unsupported_set
+        )
+        if json_mode_ok:
             request["response_format"] = {"type": "json_object"}
         try:
             response = await litellm.acompletion(**request)
