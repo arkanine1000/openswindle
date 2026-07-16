@@ -137,6 +137,28 @@ async def test_susceptibility_toggle_filters_human_talk(monkeypatch, game):
     assert "bid 2x3" in off_text  # the move itself is still public knowledge
 
 
+async def test_json_mode_rejection_retries_without_it(monkeypatch, game):
+    calls: list[dict] = []
+
+    async def fake(**kwargs):
+        calls.append(kwargs)
+        if "response_format" in kwargs:
+            raise RuntimeError("Invalid input, param: 'response_format'")
+        return _response(GOOD)
+
+    monkeypatch.setattr(litellm, "acompletion", fake)
+    llm._json_mode_unsupported.clear()
+    try:
+        outcome = await _decide(game)
+        assert not outcome.fallback
+        assert outcome.decision.move.action == "call"
+        assert len(calls) == 2
+        assert "response_format" in calls[0]
+        assert "response_format" not in calls[1]
+    finally:
+        llm._json_mode_unsupported.clear()
+
+
 async def test_mock_mode_never_touches_the_provider(monkeypatch, game):
     state, profile, own, menu, transcript = game
     monkeypatch.setattr(llm, "get_settings", lambda: Settings(mock_llm=True))

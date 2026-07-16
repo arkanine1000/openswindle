@@ -7,10 +7,11 @@ output. That engine is used server-side only, to validate legality and to
 price the decision post-mortem. The prompt is ordered stable-prefix-first
 (system rules, then the per-match character sheet, then the append-only
 transcript, then the volatile per-turn tail) so provider-side implicit
-prefix caching hits on every consecutive turn. Illegal or unparseable
-outputs trigger a reprompt with the violation explained; after the retry
-budget the deterministic scripted policy takes over (flagged as a fallback
-in telemetry).
+prefix caching hits on every consecutive turn. Provider JSON mode is used
+where supported and dropped automatically for models whose gateway rejects
+it. Illegal or unparseable outputs trigger a reprompt with the violation
+explained; after the retry budget the deterministic scripted policy takes
+over (flagged as a fallback in telemetry).
 """
 
 import json
@@ -32,6 +33,21 @@ from ..probability import find_scored
 from . import scripted
 
 logger = logging.getLogger(__name__)
+
+# Models whose provider rejected response_format at runtime; retried without.
+_json_mode_unsupported: set[str] = set()
+
+
+def _looks_like_json_mode_rejection(exc: Exception) -> bool:
+    """The offending param often only appears in the chained provider error."""
+    if type(exc).__name__ == "BadRequestError":
+        return True
+    parts: list[str] = []
+    error: BaseException | None = exc
+    while error is not None and len(parts) < 5:
+        parts.append(str(error))
+        error = error.__cause__ or error.__context__
+    return "response_format" in " ".join(parts)
 
 SYSTEM_PROMPT = """\
 You are seated at a low table in a smoky gambling den, playing Swindlestones —
@@ -198,14 +214,34 @@ async def decide(
     usage_totals = {"prompt": 0, "cached": 0, "completion": 0}
     rejections = 0
     for _ in range(settings.llm_max_reprompts + 1):
+        request: dict = {
+            "model": settings.llm_model,
+            "messages": messages,
+            "temperature": 1,
+        }
+        if settings.llm_model not in _json_mode_unsupported:
+            request["response_format"] = {"type": "json_object"}
         try:
-            response = await litellm.acompletion(
-                model=settings.llm_model,
-                messages=messages,
-                response_format={"type": "json_object"},
-                temperature=1,
-            )
-        except Exception:
+            response = await litellm.acompletion(**request)
+        except Exception as exc:
+            # Some gateways advertise JSON mode but reject it downstream; the
+            # prompt contract and reprompt loop enforce JSON without it.
+            if "response_format" in request and _looks_like_json_mode_rejection(exc):
+                _json_mode_unsupported.add(settings.llm_model)
+                logger.info(
+                    "Model %s rejected response_format; retrying without JSON mode",
+                    settings.llm_model,
+                )
+                return await decide(
+                    profile,
+                    menu,
+                    round_state,
+                    own_hand,
+                    opponent_dice,
+                    transcript,
+                    npc_seat,
+                    susceptibility_on,
+                )
             logger.exception("LLM call failed; falling back to scripted policy")
             break
 
