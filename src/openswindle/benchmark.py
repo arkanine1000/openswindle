@@ -24,6 +24,7 @@ import contextlib
 import dataclasses
 import hashlib
 import json
+import time
 from dataclasses import dataclass
 from random import Random
 
@@ -53,6 +54,7 @@ class BenchmarkOptions:
     npc_seed_base: str = "bench"
     probe_seed: str = "probe 1"
     run_seed: str = "openswindle-bench-1"
+    verbose: bool = False
 
 
 @dataclass
@@ -163,13 +165,19 @@ async def _play_match(
         menu = probability.build_menu(state.round.current_bid, own, opponent_dice)
         round_no = state.round.round_no
 
+        mode_tag = f"sus-{'on' if susceptibility else 'off'} m{match_index + 1} r{round_no}"
         if seat == PROBE_SEAT:
             decision = scripted.decide(probe_profile, menu, state.round)
             talk = _probe_talk(talk_rng, own)
             engine.apply_move(state, PROBE_SEAT, decision.move, talk)
             _log_move(transcript, PROBE_SEAT, decision.move, talk, round_no)
+            if options.verbose:
+                move_text = str(decision.move.bid) if decision.move.action == "bid" else "call"
+                said = f' said "{talk}"' if talk else ""
+                print(f"[{mode_tag}] probe {move_text}{said}", flush=True)
             continue
 
+        turn_started = time.perf_counter()
         if options.opponent_type == "llm":
             outcome = await llm.decide(
                 npc_profile,
@@ -210,7 +218,25 @@ async def _play_match(
         )
         engine.apply_move(state, NPC_SEAT, decision.move, decision.table_talk or None)
         _log_move(transcript, NPC_SEAT, decision.move, decision.table_talk or None, round_no)
+        if options.verbose:
+            record = decisions[-1]
+            move_text = str(decision.move.bid) if decision.move.action == "bid" else "call"
+            tokens = (
+                f" tokens={record.prompt_tokens}p/{record.completion_tokens}c"
+                f" cached={record.cached_tokens}"
+                if record.prompt_tokens
+                else ""
+            )
+            print(
+                f"[{mode_tag}] npc {move_text} dev={record.deviation_price:.3f}"
+                f" reprompts={record.reprompts} fallback={record.fallback}{tokens}"
+                f" {time.perf_counter() - turn_started:.1f}s",
+                flush=True,
+            )
 
+    if options.verbose:
+        print(f"[sus-{'on' if susceptibility else 'off'} m{match_index + 1}] "
+              f"winner: {'npc' if state.winner == NPC_SEAT else 'probe'}", flush=True)
     assert state.winner is not None
     return state.winner, decisions
 
@@ -330,6 +356,9 @@ def main() -> None:
     parser.add_argument("--probe-seed", default="probe 1")
     parser.add_argument("--run-seed", default="openswindle-bench-1")
     parser.add_argument("--json", dest="json_path", default=None, help="also write report JSON")
+    parser.add_argument(
+        "--verbose", action="store_true", help="print every turn as it is played"
+    )
     args = parser.parse_args()
 
     options = BenchmarkOptions(
@@ -340,6 +369,7 @@ def main() -> None:
         npc_seed_base=args.npc_seed_base,
         probe_seed=args.probe_seed,
         run_seed=args.run_seed,
+        verbose=args.verbose,
     )
     report = asyncio.run(run(options))
     _print_report(report)
