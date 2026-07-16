@@ -1,5 +1,7 @@
 # OpenSwindle
 
+[![CI](https://github.com/arkanine1000/openswindle/actions/workflows/ci.yml/badge.svg)](https://github.com/arkanine1000/openswindle/actions/workflows/ci.yml)
+
 An open-source (MIT) backend for **Swindlestones**, the d4 bluffing game from Inkle's
 adaptation of *Sorcery!* — a close cousin of Liar's Dice. This repo is the authoritative
 game server: it deals hands, validates every move, adjudicates calls, proves its own
