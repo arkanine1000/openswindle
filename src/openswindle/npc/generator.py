@@ -62,12 +62,13 @@ def stable_hash(seed: str) -> int:
 def generate_npc(seed: str) -> NPCProfile:
     rng = Random(stable_hash(seed))
 
-    # Parameters first.
+    # Parameters first. randint keeps every tenth equally likely; rounding a
+    # uniform float would give the endpoint buckets 0.0 and 1.0 half weight.
     params = NPCParams(
-        deception=round(rng.random(), 1),
-        skepticism=round(rng.random(), 1),
-        aggression=round(rng.random(), 1),
-        chattiness=round(rng.random(), 1),
+        deception=rng.randint(0, 10) / 10,
+        skepticism=rng.randint(0, 10) / 10,
+        aggression=rng.randint(0, 10) / 10,
+        chattiness=rng.randint(0, 10) / 10,
     )
 
     # Bio second, conditioned on the parameters.
