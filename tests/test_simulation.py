@@ -5,12 +5,33 @@ Every simulation is fully seeded, so these tests are deterministic despite
 exercising thousands of decisions.
 """
 
+import hashlib
 import random
 from collections import Counter
+
+import pytest
 
 from openswindle import engine, fairness, probability
 from openswindle.models import MatchConfig
 from openswindle.npc import generator, scripted
+
+
+@pytest.fixture(autouse=True)
+def deterministic_salts(monkeypatch):
+    counter = 0
+
+    def draw_salt() -> bytes:
+        nonlocal counter
+        salt = hashlib.sha256(f"simulation-salt:{counter}".encode()).digest()
+        counter += 1
+        return salt
+
+    def reset() -> None:
+        nonlocal counter
+        counter = 0
+
+    monkeypatch.setattr(fairness, "draw_salt", draw_salt)
+    return reset
 
 
 def play_match(match_seed: int, npc_seed: str, dice: int, on_npc_decision=None):
@@ -63,6 +84,40 @@ def play_match(match_seed: int, npc_seed: str, dice: int, on_npc_decision=None):
     assert state.winner in ("a", "b")
     assert 0 in state.dice_counts.values()
     return state
+
+
+def _summary(state):
+    return {
+        "winner": state.winner,
+        "dice_counts": state.dice_counts,
+        "round_no": state.round.round_no,
+        "reveals": [
+            {
+                "round_no": reveal.round_no,
+                "hands": reveal.hands,
+                "salts": reveal.salts,
+                "final_bid": reveal.final_bid,
+                "actual_count": reveal.actual_count,
+                "bid_met": reveal.bid_met,
+                "loser": reveal.loser,
+            }
+            for reveal in state.reveals
+        ],
+    }
+
+
+def _run_invariant_suite():
+    return [
+        _summary(play_match(match_seed=i, npc_seed=f"seed {i}", dice=2 + i % 5))
+        for i in range(24)
+    ]
+
+
+def test_simulation_repeats_exactly(deterministic_salts):
+    first = _run_invariant_suite()
+    deterministic_salts()
+    second = _run_invariant_suite()
+    assert first == second
 
 
 def test_engine_invariants_over_many_matches():
