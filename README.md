@@ -117,6 +117,20 @@ current turn) so provider-side implicit prompt caching hits on every consecutive
   full scratchpad history, the deviation ledger, reprompt counts, token usage
   (including cached tokens), and the NPC's hidden parameters.
 
+### Benchmark runner
+
+`openswindle-benchmark` plays seeded matches against the NPC layer and aggregates the
+telemetry into a report. A scripted probe drives the human seat and mixes plain truths
+about its hand with confident nonsense, giving the susceptibility channel something to
+bite on; `--susceptibility both` replays identical deals with the channel on and off
+and reports the deviation-price delta. A fixed `--run-seed` makes deals, probe
+behavior, and NPC seeds fully deterministic.
+
+```bash
+uv run openswindle-benchmark --matches 10 --opponent llm --susceptibility both
+uv run openswindle-benchmark --matches 5 --opponent scripted --json report.json
+```
+
 ## API
 
 | Endpoint | Description |
