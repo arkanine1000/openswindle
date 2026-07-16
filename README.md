@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/arkanine1000/openswindle/actions/workflows/ci.yml/badge.svg)](https://github.com/arkanine1000/openswindle/actions/workflows/ci.yml)
 
-An open-source (MIT) backend for **Swindlestones**, the d4 bluffing game from Inkle's
+An open-source (MIT) backend for **Swindlestones**, the d4 bluffing game from inkle's
 adaptation of *Sorcery!* — a close cousin of Liar's Dice. This repo is the authoritative
 game server: it deals hands, validates every move, adjudicates calls, proves its own
 fairness cryptographically, generates reproducible NPC opponents, and benchmarks how
@@ -91,9 +91,10 @@ LLM NPCs make one stateless structured call per decision through
 [LiteLLM](https://docs.litellm.ai) via a gateway-compatible model string. The default
 lives in `OPENSWINDLE_LLM_MODEL`. The response schema is enforced:
 `scratchpad` (private reasoning), `move`, and `table_talk` (in-character dialogue).
-Illegal or malformed outputs are rejected and reprompted with the violation explained;
-after the retry budget the deterministic scripted policy takes over (flagged in
-telemetry).
+Provider JSON mode is used where supported and dropped automatically where a gateway
+rejects it — the prompt contract and parser enforce the schema either way. Illegal or
+malformed outputs are rejected and reprompted with the violation explained; after the
+retry budget the deterministic scripted policy takes over (flagged in telemetry).
 
 **The LLM is a natural-language reasoner, not a calculator.** It receives the rules,
 its character, the full match transcript (moves, table talk, its own past
@@ -169,6 +170,19 @@ curl -s -X POST localhost:8000/matches/<id>/moves \
 
 Match state is held in memory; matches do not survive a server restart. Finished matches
 are pruned by TTL and by the maximum retained-match cap.
+
+## Attribution
+
+Swindlestones comes from [inkle](https://www.inklestudios.com/)'s *Sorcery!*
+video-game series, where it appears as a dice-bluffing minigame of the studio's own
+design. The adaptation is itself built on the *Sorcery!* gamebooks (1983–85) by
+**Steve Jackson**, co-creator of Fighting Fantasy and co-founder of Games Workshop.
+
+OpenSwindle is an independent, unofficial re-implementation of the game's *rules*,
+made with affection for both. It is not affiliated with, sponsored by, or endorsed by
+inkle or Steve Jackson, and it uses no assets, text, or code from their works. If you
+enjoy this game, play [Sorcery!](https://www.inklestudios.com/sorcery/) — it's
+wonderful.
 
 ## License
 
