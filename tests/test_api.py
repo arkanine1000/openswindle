@@ -102,6 +102,14 @@ async def test_auth_required(client):
     assert (await client.get(f"/matches/{match_id}", headers=bad)).status_code == 403
 
 
+async def test_tokens_are_scoped_to_their_match(client):
+    first = await create_match(client, dice_per_player=2)
+    second = await create_match(client, dice_per_player=2)
+    cross = {"X-Player-Token": first["tokens"]["a"]}
+    response = await client.get(f"/matches/{second['match_id']}", headers=cross)
+    assert response.status_code == 403
+
+
 async def test_illegal_move_rejected(client):
     created = await create_match(client, dice_per_player=2)
     match_id = created["match_id"]
