@@ -1,6 +1,7 @@
 """FastAPI application: REST transport for the authoritative engine."""
 
 import logging
+from typing import Literal
 
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -60,7 +61,7 @@ class MoveRequest(BaseModel):
 
 
 class NPCEvent(BaseModel):
-    action: str  # "bid" | "call"
+    action: Literal["bid", "call"]
     bid: str | None = None
     table_talk: str = ""
 
@@ -168,9 +169,7 @@ async def _npc_take_turns(record: MatchRecord) -> tuple[list[NPCEvent], list[Rou
                 susceptibility_on,
             )
         else:
-            outcome = llm.LLMOutcome(
-                decision=scripted.decide(profile, menu, state.round, own_hand, opponent_dice)
-            )
+            outcome = llm.LLMOutcome(decision=scripted.decide(profile, menu, state.round))
 
         decision = outcome.decision
         last_human_talk = next(
@@ -189,6 +188,7 @@ async def _npc_take_turns(record: MatchRecord) -> tuple[list[NPCEvent], list[Rou
                 susceptibility_on=susceptibility_on,
                 human_table_talk=last_human_talk,
                 fallback=outcome.fallback,
+                reprompts=outcome.reprompts,
                 prompt_tokens=outcome.prompt_tokens,
                 cached_tokens=outcome.cached_tokens,
                 completion_tokens=outcome.completion_tokens,
@@ -301,7 +301,7 @@ async def npc_profile(match_id: str) -> NPCPublicProfile:
     record = _get_record(match_id)
     if record.npc_profile is None:
         raise HTTPException(status_code=404, detail="This match has no NPC")
-    # Params and tells stay hidden during play; they are part of the autopsy.
+    # Numeric params stay hidden during play; they are part of the autopsy.
     return NPCPublicProfile(name=record.npc_profile.name, bio=record.npc_profile.bio)
 
 

@@ -78,10 +78,10 @@ Opponents are generated from a shareable seed string (`"seed 4471"`): the seed f
 draws four numeric traits — **deception** (bluff frequency), **skepticism** (call
 threshold), **aggression** (raise velocity), **chattiness** — and the biography is then
 derived *from* those parameters, so the mechanical policy dictates the flavor, never
-the reverse. Each character also gets 1–2 planted, persistent behavioral tells (e.g.
-"always bids conservatively when holding a pair"). All per-turn randomness is derived
-from the seed and game position, never fresh entropy: a character is exactly
-reproducible for benchmarking, and its tells are learnable across a match.
+the reverse. All per-turn randomness is derived from the seed and game position, never
+fresh entropy: a character is exactly reproducible for benchmarking, and its *style*
+(how bold, how suspicious, how talkative) is learnable across a match without any
+scripted triggers that would make it exploitable.
 
 ## LLM opponents
 
@@ -112,8 +112,8 @@ current turn) so provider-side implicit prompt caching hits on every consecutive
   optimal move (highest exact truth probability) and the win-probability delta is
   logged.
 - **Post-match autopsy** (`GET /matches/{id}/autopsy`, only after the match ends): the
-  full scratchpad history, the deviation ledger, token usage (including cached
-  tokens), and the NPC's hidden parameters and tells.
+  full scratchpad history, the deviation ledger, reprompt counts, token usage
+  (including cached tokens), and the NPC's hidden parameters.
 
 ## API
 

@@ -2,7 +2,7 @@
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 Seat = Literal["a", "b"]
 Face = Annotated[int, Field(ge=1, le=4)]
@@ -36,12 +36,6 @@ class CallMove(BaseModel):
 
 
 Move = Annotated[BidMove | CallMove, Field(discriminator="action")]
-
-
-class MoveEnvelope(BaseModel):
-    """Wrapper so a bare Move union can be parsed/serialized uniformly."""
-
-    move: Move
 
 
 # ---------------------------------------------------------------------------
@@ -154,23 +148,22 @@ class ProbabilityMenu(BaseModel):
 
 
 class NPCParams(BaseModel):
+    # Frozen: profiles are lru_cached and shared across matches.
+    model_config = ConfigDict(frozen=True)
+
     deception: float = Field(ge=0.0, le=1.0)
     skepticism: float = Field(ge=0.0, le=1.0)
     aggression: float = Field(ge=0.0, le=1.0)
     chattiness: float = Field(ge=0.0, le=1.0)
 
 
-class Tell(BaseModel):
-    tell_id: str
-    description: str
-
-
 class NPCProfile(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     seed: str
     name: str
     bio: str
     params: NPCParams
-    tells: list[Tell]
 
 
 class LLMDecision(BaseModel):
@@ -211,6 +204,7 @@ class DecisionRecord(BaseModel):
     susceptibility_on: bool
     human_table_talk_seen: str | None = None
     fallback: bool = False
+    reprompts: int = 0
     prompt_tokens: int | None = None
     cached_tokens: int | None = None
     completion_tokens: int | None = None

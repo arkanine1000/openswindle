@@ -1,23 +1,22 @@
-"""Stateless LLM decision layer via LiteLLM (provider-agnostic, routed through Vercel AI Gateway).
+"""Stateless LLM decision layer via LiteLLM (provider-agnostic, routed through a gateway).
 
 One structured completion per decision; no agent loop, no tools. The LLM is
-a natural-language reasoner: it receives the rules, its character, the bid
-history, and its hand — never the deterministic probability engine's output.
-That engine is used server-side only, to validate legality and to price the
-decision post-mortem. The prompt is ordered stable-prefix-first (system
-rules, then the per-match NPC profile, then the append-only bid history,
-then the volatile per-turn tail) so provider-side implicit prefix caching —
-passed through by the gateway — hits on every consecutive turn. Illegal or
-unparseable outputs trigger a reprompt with the violation explained; after
-the retry budget the deterministic scripted policy takes over (flagged as a
-fallback in telemetry).
+a natural-language reasoner: it receives the rules, its character, the match
+transcript, and its hand — never the deterministic probability engine's
+output. That engine is used server-side only, to validate legality and to
+price the decision post-mortem. The prompt is ordered stable-prefix-first
+(system rules, then the per-match character sheet, then the append-only
+transcript, then the volatile per-turn tail) so provider-side implicit
+prefix caching hits on every consecutive turn. Illegal or unparseable
+outputs trigger a reprompt with the violation explained; after the retry
+budget the deterministic scripted policy takes over (flagged as a fallback
+in telemetry).
 """
 
 import json
 import logging
 from dataclasses import dataclass
 
-import litellm
 from pydantic import ValidationError
 
 from ..config import get_settings
@@ -38,8 +37,8 @@ SYSTEM_PROMPT = """\
 You are seated at a low table in a smoky gambling den, playing Swindlestones —
 a liar's game of four-sided bones. You are not an assistant playing a role;
 for the duration of this match you ARE the character described below, with
-their appetites, grudges, and habits. Their bio is who you are, their traits
-are your instincts, and their tells are compulsions you cannot suppress.
+their appetites, grudges, and habits. Their bio is who you are and their
+numeric traits are your instincts.
 
 THE GAME
 Each player conceals a hand of d4 dice (faces 1-4). Players alternate bids of
@@ -85,15 +84,13 @@ class LLMOutcome:
 
 
 def _profile_block(profile: NPCProfile) -> str:
-    tells = "\n".join(f"- {t.description}" for t in profile.tells)
     return (
         f"WHO YOU ARE\nName: {profile.name}\nBio: {profile.bio}\n"
         f"Instincts (0 = never, 1 = always): "
         f"deception={profile.params.deception} (how readily you bluff), "
         f"skepticism={profile.params.skepticism} (how quick you are to call a liar), "
         f"aggression={profile.params.aggression} (how hard you push the bidding), "
-        f"chattiness={profile.params.chattiness} (how much you talk at the table)\n"
-        f"Compulsions you cannot suppress:\n{tells}"
+        f"chattiness={profile.params.chattiness} (how much you talk at the table)"
     )
 
 
@@ -124,9 +121,7 @@ def _transcript_block(
     return "MATCH TRANSCRIPT (chronological; scratchpads are private to you)\n" + "\n".join(lines)
 
 
-def _turn_block(
-    round_state: RoundState, own_hand: list[int], opponent_dice: int
-) -> str:
+def _turn_block(round_state: RoundState, own_hand: list[int], opponent_dice: int) -> str:
     current = round_state.current_bid
     return (
         f"YOUR TURN (round {round_state.round_no})\n"
@@ -140,7 +135,7 @@ def _turn_block(
 def _parse_decision(raw: str, menu: ProbabilityMenu, round_state: RoundState) -> LLMDecision:
     text = raw.strip()
     if text.startswith("```"):
-        text = text.strip("`")
+        text = text.strip("`").strip()
         text = text.removeprefix("json").strip()
     decision = LLMDecision.model_validate(json.loads(text))
     # The menu is server-side only; here it acts purely as the legality oracle.
@@ -155,6 +150,16 @@ def _parse_decision(raw: str, menu: ProbabilityMenu, round_state: RoundState) ->
     return decision
 
 
+def _accumulate_usage(totals: dict[str, int], response) -> None:
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return
+    totals["prompt"] += getattr(usage, "prompt_tokens", 0) or 0
+    totals["completion"] += getattr(usage, "completion_tokens", 0) or 0
+    details = getattr(usage, "prompt_tokens_details", None)
+    totals["cached"] += (getattr(details, "cached_tokens", 0) or 0) if details else 0
+
+
 async def decide(
     profile: NPCProfile,
     menu: ProbabilityMenu,
@@ -167,14 +172,14 @@ async def decide(
 ) -> LLMOutcome:
     settings = get_settings()
 
-    def scripted_fallback() -> LLMOutcome:
-        decision = scripted.decide(profile, menu, round_state, own_hand, opponent_dice)
-        return LLMOutcome(decision=decision, fallback=True)
-
     if settings.mock_llm:
-        outcome = scripted_fallback()
-        outcome.fallback = False  # Mock mode is the intended path, not a failure.
-        return outcome
+        # Mock mode is the intended path, not a failure.
+        return LLMOutcome(decision=scripted.decide(profile, menu, round_state))
+
+    # Deferred import: litellm is heavy, and mock mode should stay instant.
+    import litellm
+
+    litellm.drop_params = True
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -191,7 +196,8 @@ async def decide(
     ]
 
     usage_totals = {"prompt": 0, "cached": 0, "completion": 0}
-    for attempt in range(settings.llm_max_reprompts + 1):
+    rejections = 0
+    for _ in range(settings.llm_max_reprompts + 1):
         try:
             response = await litellm.acompletion(
                 model=settings.llm_model,
@@ -200,21 +206,16 @@ async def decide(
                 temperature=1,
             )
         except Exception:
-            logger.exception("LLM call failed (attempt %d)", attempt + 1)
-            return scripted_fallback()
+            logger.exception("LLM call failed; falling back to scripted policy")
+            break
 
-        usage = getattr(response, "usage", None)
-        if usage is not None:
-            usage_totals["prompt"] += getattr(usage, "prompt_tokens", 0) or 0
-            usage_totals["completion"] += getattr(usage, "completion_tokens", 0) or 0
-            details = getattr(usage, "prompt_tokens_details", None)
-            usage_totals["cached"] += (getattr(details, "cached_tokens", 0) or 0) if details else 0
-
+        _accumulate_usage(usage_totals, response)
         raw = response.choices[0].message.content or ""
         try:
             decision = _parse_decision(raw, menu, round_state)
         except (json.JSONDecodeError, ValidationError, ValueError) as exc:
-            logger.warning("Rejected LLM payload (attempt %d): %s", attempt + 1, exc)
+            rejections += 1
+            logger.warning("Rejected LLM payload (rejection %d): %s", rejections, exc)
             messages.append({"role": "assistant", "content": raw})
             messages.append(
                 {
@@ -229,10 +230,20 @@ async def decide(
 
         return LLMOutcome(
             decision=decision,
-            reprompts=attempt,
+            reprompts=rejections,
             prompt_tokens=usage_totals["prompt"],
             cached_tokens=usage_totals["cached"],
             completion_tokens=usage_totals["completion"],
         )
 
-    return scripted_fallback()
+    # Retry budget exhausted or transport failure: deterministic fallback,
+    # preserving whatever tokens were burned getting here.
+    made_calls = usage_totals["prompt"] > 0
+    return LLMOutcome(
+        decision=scripted.decide(profile, menu, round_state),
+        fallback=True,
+        reprompts=rejections,
+        prompt_tokens=usage_totals["prompt"] if made_calls else None,
+        cached_tokens=usage_totals["cached"] if made_calls else None,
+        completion_tokens=usage_totals["completion"] if made_calls else None,
+    )

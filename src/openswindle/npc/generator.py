@@ -1,31 +1,17 @@
 """Seed-to-bio NPC generation.
 
 Parameters first: the seed deterministically draws the four numeric traits.
-Bio second: the flavor text is derived *from* the parameters (archetype
-buckets), so the mechanical policy dictates the flavor, never the reverse.
-Each profile also plants 1-2 persistent, mechanically enforced tells chosen
-by the same RNG, so a given seed always produces the identical opponent.
+Bio second: the flavor text is derived *from* the parameters (trait buckets),
+so the mechanical policy dictates the flavor, never the reverse. A given seed
+always produces the identical opponent; unpredictability comes from the
+variance between seeds, never from within a character.
 """
 
 import hashlib
 from functools import lru_cache
 from random import Random
 
-from ..models import NPCParams, NPCProfile, Tell
-
-# Catalog of plantable tells. Each tell_id has an enforcement hook in the
-# scripted policy and is stated as a hard behavioral rule in the LLM prompt.
-TELL_CATALOG: dict[str, str] = {
-    "opens_low": "Always opens a round one quantity below what the maths supports.",
-    "never_bluff_face4": (
-        "Never bluffs on face 4; a face-4 bid from them is always covered by their hand."
-    ),
-    "pair_conservative": "Always bids conservatively (the safest legal raise) when holding a pair.",
-    "call_shy_early": "Never calls within the first two bids of a round.",
-    "escalates_when_quiet": (
-        "Raises the quantity by two whenever the opponent said nothing last turn."
-    ),
-}
+from ..models import NPCParams, NPCProfile
 
 _FIRST_NAMES = [
     "Vex", "Morwenna", "Colm", "Iskra", "Tobbler", "Yaz", "Petrel", "Ondine",
@@ -40,27 +26,31 @@ _PROFESSIONS = [
 
 
 def _archetype(params: NPCParams) -> str:
-    if params.deception >= 0.5 and params.aggression >= 0.5:
-        return "an unhinged"
-    if params.deception >= 0.5:
-        return "a smiling"
-    if params.aggression >= 0.5:
+    if params.aggression >= 0.7:
         return "a belligerent"
-    return "a timid"
+    if params.aggression <= 0.3:
+        return "a timid"
+    return "a weathered"
 
 
-def _temperament(params: NPCParams) -> str:
-    doubt = (
-        "who trusts no claim they cannot count themselves"
-        if params.skepticism >= 0.5
-        else "who takes most tales at face value"
-    )
-    mouth = (
-        "and never stops talking"
-        if params.chattiness >= 0.5
-        else "and speaks only when the dice demand it"
-    )
-    return f"{doubt} {mouth}"
+def _lie_clause(params: NPCParams) -> str:
+    if params.deception >= 0.7:
+        return "who lies as easily as breathing"
+    if params.deception <= 0.3:
+        return "who can barely stomach a lie"
+    return "who bends the truth when it pays"
+
+
+def _doubt_clause(params: NPCParams) -> str:
+    if params.skepticism >= 0.5:
+        return "trusts nothing they cannot count"
+    return "takes most tales at face value"
+
+
+def _mouth_clause(params: NPCParams) -> str:
+    if params.chattiness >= 0.5:
+        return "never stops talking"
+    return "speaks only when the dice demand it"
 
 
 def stable_hash(seed: str) -> int:
@@ -80,13 +70,12 @@ def generate_npc(seed: str) -> NPCProfile:
         chattiness=round(rng.random(), 1),
     )
 
-    # Planted tells: 1-2 persistent behaviors.
-    tell_ids = rng.sample(sorted(TELL_CATALOG), k=rng.choice([1, 2]))
-    tells = [Tell(tell_id=t, description=TELL_CATALOG[t]) for t in tell_ids]
-
     # Bio second, conditioned on the parameters.
     name = rng.choice(_FIRST_NAMES)
     profession = rng.choice(_PROFESSIONS)
-    bio = f"{name}, {_archetype(params)} {profession} {_temperament(params)}."
+    bio = (
+        f"{name}, {_archetype(params)} {profession} {_lie_clause(params)}, "
+        f"{_doubt_clause(params)}, and {_mouth_clause(params)}."
+    )
 
-    return NPCProfile(seed=seed, name=name, bio=bio, params=params, tells=tells)
+    return NPCProfile(seed=seed, name=name, bio=bio, params=params)
