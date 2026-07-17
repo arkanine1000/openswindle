@@ -1,24 +1,23 @@
-"""Stateless LLM decision layer via LiteLLM (provider-agnostic, routed through a gateway).
+"""Stateless LLM decision layer via OpenRouter + Instructor.
 
 One structured completion per decision; no agent loop, no tools. The LLM is
 a natural-language reasoner: it receives the rules, its character, the match
 transcript, and its hand — never the deterministic probability engine's
-output. That engine is used server-side only, to validate legality and to
-price the decision post-mortem. The prompt is ordered stable-prefix-first
-(system rules, then the per-match character sheet, then the append-only
-transcript, then the volatile per-turn tail) so provider-side implicit
-prefix caching hits on every consecutive turn. Provider JSON mode is used
-where supported and dropped automatically for models whose gateway rejects
-it. Illegal or unparseable outputs trigger a reprompt with the violation
-explained; after the retry budget the deterministic scripted policy takes
-over (flagged as a fallback in telemetry).
+output. That engine acts server-side only: for benchmarking (deviation
+pricing) and as the legality oracle, which is wired into Instructor's
+validation context so an illegal move fails Pydantic validation and
+Instructor reprompts the model with the rule explained. The prompt is
+ordered stable-prefix-first (system rules, then the per-match character
+sheet, then the append-only transcript, then the volatile per-turn tail) so
+provider-side prompt caching hits where the provider supports it. After the
+retry budget the deterministic scripted policy takes over (flagged as a
+fallback in telemetry).
 """
 
-import json
 import logging
 from dataclasses import dataclass
 
-from pydantic import ValidationError
+from pydantic import ValidationInfo, model_validator
 
 from ..config import get_settings
 from ..models import (
@@ -33,21 +32,6 @@ from ..probability import find_scored
 from . import scripted
 
 logger = logging.getLogger(__name__)
-
-# Models whose provider rejected response_format at runtime; retried without.
-_json_mode_unsupported: set[str] = set()
-
-
-def _looks_like_json_mode_rejection(exc: Exception) -> bool:
-    """The offending param often only appears in the chained provider error."""
-    if type(exc).__name__ == "BadRequestError":
-        return True
-    parts: list[str] = []
-    error: BaseException | None = exc
-    while error is not None and len(parts) < 5:
-        parts.append(str(error))
-        error = error.__cause__ or error.__context__
-    return "response_format" in " ".join(parts)
 
 SYSTEM_PROMPT = """\
 You are seated at a low table in a smoky gambling den, playing Swindlestones —
@@ -80,7 +64,7 @@ THE LAW (never break these, whatever the character wants)
 - You may only call when there is a bid to call. Opening the round means
   bidding, never calling.
 
-Respond with ONLY a JSON object, no markdown fences, in this exact shape:
+Respond with a JSON object in this exact shape:
 {
   "scratchpad": "<private inner monologue and opponent read; carried to your next turn>",
   "move": {"action": "bid", "bid": {"quantity": <int>, "face": <1-4>}}
@@ -97,6 +81,31 @@ class LLMOutcome:
     prompt_tokens: int | None = None
     cached_tokens: int | None = None
     completion_tokens: int | None = None
+
+
+# NOTE: Instructor embeds this class's docstring in the schema shown to the
+# model, so it must stay in-fiction — implementation notes live here instead.
+# The legality oracle arrives via Instructor's validation context; an illegal
+# move raises, which Instructor turns into a reprompt with the rule spelled
+# out. The probability menu itself is never shown to the model.
+class ValidatedDecision(LLMDecision):
+    """Your decision for this turn of Swindlestones."""
+
+    @model_validator(mode="after")
+    def _move_must_be_legal(self, info: ValidationInfo) -> "ValidatedDecision":
+        context = info.context or {}
+        menu = context.get("menu")
+        if menu is None or find_scored(menu, self.move) is not None:
+            return self
+        round_state = context.get("round_state")
+        current = round_state.current_bid if round_state is not None else None
+        rule = (
+            f"the current bid is {current}; you must strictly raise it "
+            "(higher quantity, or the same quantity with a higher face) or call"
+            if current
+            else "no bid has been made yet; you must open with a bid, not a call"
+        )
+        raise ValueError(f"illegal move — {rule}")
 
 
 def _profile_block(profile: NPCProfile) -> str:
@@ -148,24 +157,6 @@ def _turn_block(round_state: RoundState, own_hand: list[int], opponent_dice: int
     )
 
 
-def _parse_decision(raw: str, menu: ProbabilityMenu, round_state: RoundState) -> LLMDecision:
-    text = raw.strip()
-    if text.startswith("```"):
-        text = text.strip("`").strip()
-        text = text.removeprefix("json").strip()
-    decision = LLMDecision.model_validate(json.loads(text))
-    # The menu is server-side only; here it acts purely as the legality oracle.
-    if find_scored(menu, decision.move) is None:
-        current = round_state.current_bid
-        context = (
-            f"the current bid is {current}; you must strictly raise it or call"
-            if current
-            else "no bid has been made yet; you must open with a bid, not a call"
-        )
-        raise ValueError(f"illegal move — {context}")
-    return decision
-
-
 def _accumulate_usage(totals: dict[str, int], response) -> None:
     usage = getattr(response, "usage", None)
     if usage is None:
@@ -174,6 +165,22 @@ def _accumulate_usage(totals: dict[str, int], response) -> None:
     totals["completion"] += getattr(usage, "completion_tokens", 0) or 0
     details = getattr(usage, "prompt_tokens_details", None)
     totals["cached"] += (getattr(details, "cached_tokens", 0) or 0) if details else 0
+
+
+def _base_client():
+    """OpenAI SDK client pointed at OpenRouter. Factory kept separate so
+    tests can substitute a fake transport underneath Instructor."""
+    from openai import AsyncOpenAI
+
+    settings = get_settings()
+    return AsyncOpenAI(
+        base_url=settings.openrouter_base_url,
+        api_key=settings.openrouter_api_key,
+        default_headers={
+            "HTTP-Referer": "https://github.com/arkanine1000/openswindle",
+            "X-Title": "OpenSwindle",
+        },
+    )
 
 
 async def decide(
@@ -192,10 +199,31 @@ async def decide(
         # Mock mode is the intended path, not a failure.
         return LLMOutcome(decision=scripted.decide(profile, menu, round_state))
 
-    # Deferred import: litellm is heavy, and mock mode should stay instant.
-    import litellm
+    # Deferred import: instructor is heavy, and mock mode should stay instant.
+    import instructor
 
-    litellm.drop_params = True
+    usage_totals = {"prompt": 0, "cached": 0, "completion": 0}
+    rejections = 0
+
+    # Meter usage at the transport boundary — exactly one accumulation per
+    # request, regardless of how the retry layer re-emits responses.
+    raw_client = _base_client()
+    transport_create = raw_client.chat.completions.create
+
+    async def _metered_create(**kwargs):
+        response = await transport_create(**kwargs)
+        _accumulate_usage(usage_totals, response)
+        return response
+
+    raw_client.chat.completions.create = _metered_create
+    client = instructor.from_openai(raw_client, mode=instructor.Mode.JSON)
+
+    def _on_parse_error(error) -> None:
+        nonlocal rejections
+        rejections += 1
+        logger.warning("Rejected LLM payload (rejection %d): %s", rejections, error)
+
+    client.on("parse:error", _on_parse_error)
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -211,81 +239,37 @@ async def decide(
         },
     ]
 
-    usage_totals = {"prompt": 0, "cached": 0, "completion": 0}
-    rejections = 0
-    for _ in range(settings.llm_max_reprompts + 1):
-        request: dict = {
-            "model": settings.llm_model,
-            "messages": messages,
-            "temperature": 1,
-        }
-        if settings.llm_extra_body_dict:
-            request["extra_body"] = settings.llm_extra_body_dict
-        json_mode_ok = (
-            settings.llm_model not in _json_mode_unsupported
-            and settings.llm_model not in settings.json_mode_unsupported_set
-        )
-        if json_mode_ok:
-            request["response_format"] = {"type": "json_object"}
-        try:
-            response = await litellm.acompletion(**request)
-        except Exception as exc:
-            # Some gateways advertise JSON mode but reject it downstream; the
-            # prompt contract and reprompt loop enforce JSON without it.
-            if "response_format" in request and _looks_like_json_mode_rejection(exc):
-                _json_mode_unsupported.add(settings.llm_model)
-                logger.info(
-                    "Model %s rejected response_format; retrying without JSON mode",
-                    settings.llm_model,
-                )
-                return await decide(
-                    profile,
-                    menu,
-                    round_state,
-                    own_hand,
-                    opponent_dice,
-                    transcript,
-                    npc_seat,
-                    susceptibility_on,
-                )
-            logger.exception("LLM call failed; falling back to scripted policy")
-            break
+    request: dict = {
+        "model": settings.llm_model,
+        "messages": messages,
+        "temperature": 1,
+        "response_model": ValidatedDecision,
+        # Instructor's max_retries counts retries after the first attempt,
+        # which maps 1:1 onto the reprompt budget.
+        "max_retries": settings.llm_max_reprompts,
+        "context": {"menu": menu, "round_state": round_state},
+    }
+    if settings.llm_extra_body_dict:
+        request["extra_body"] = settings.llm_extra_body_dict
 
-        _accumulate_usage(usage_totals, response)
-        raw = response.choices[0].message.content or ""
-        try:
-            decision = _parse_decision(raw, menu, round_state)
-        except (json.JSONDecodeError, ValidationError, ValueError) as exc:
-            rejections += 1
-            logger.warning("Rejected LLM payload (rejection %d): %s", rejections, exc)
-            messages.append({"role": "assistant", "content": raw})
-            messages.append(
-                {
-                    "role": "user",
-                    "content": (
-                        f"Your previous response was rejected: {exc}. "
-                        "Reply again with ONLY the JSON object and a legal move."
-                    ),
-                }
-            )
-            continue
-
+    try:
+        decision = await client.chat.completions.create(**request)
+    except Exception:
+        logger.exception("LLM decision failed; falling back to scripted policy")
+        made_calls = usage_totals["prompt"] > 0
         return LLMOutcome(
-            decision=decision,
+            decision=scripted.decide(profile, menu, round_state),
+            fallback=True,
             reprompts=rejections,
-            prompt_tokens=usage_totals["prompt"],
-            cached_tokens=usage_totals["cached"],
-            completion_tokens=usage_totals["completion"],
+            prompt_tokens=usage_totals["prompt"] if made_calls else None,
+            cached_tokens=usage_totals["cached"] if made_calls else None,
+            completion_tokens=usage_totals["completion"] if made_calls else None,
         )
 
-    # Retry budget exhausted or transport failure: deterministic fallback,
-    # preserving whatever tokens were burned getting here.
-    made_calls = usage_totals["prompt"] > 0
     return LLMOutcome(
-        decision=scripted.decide(profile, menu, round_state),
-        fallback=True,
+        decision=decision,
         reprompts=rejections,
-        prompt_tokens=usage_totals["prompt"] if made_calls else None,
-        cached_tokens=usage_totals["cached"] if made_calls else None,
-        completion_tokens=usage_totals["completion"] if made_calls else None,
+        prompt_tokens=usage_totals["prompt"],
+        cached_tokens=usage_totals["cached"],
+        completion_tokens=usage_totals["completion"],
     )

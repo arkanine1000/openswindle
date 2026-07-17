@@ -27,7 +27,7 @@ A React frontend is developed separately and pointed at this API.
 
 ```bash
 uv sync
-cp .env.example .env          # add your gateway API key, or enable mock mode
+cp .env.example .env          # add your OpenRouter API key, or enable mock mode
 uv run uvicorn openswindle.api:app --reload
 ```
 
@@ -46,7 +46,7 @@ uv run pytest
 | `probability.py` | Exact binomial truth probabilities for every legal move (server-side only) |
 | `npc/generator.py` | Deterministic seed → params → bio → planted tells |
 | `npc/scripted.py` | Parameter-driven deterministic policy (mock mode and LLM fallback) |
-| `npc/llm.py` | Stateless per-turn LLM decisions via LiteLLM |
+| `npc/llm.py` | Stateless per-turn LLM decisions via OpenRouter + Instructor |
 | `telemetry.py` | Deviation pricing and the post-match autopsy |
 | `api.py` | REST transport (FastAPI); in-memory match store |
 
@@ -87,13 +87,15 @@ scripted triggers that would make it exploitable.
 
 ## LLM opponents
 
-LLM NPCs make one stateless structured call per decision through
-[LiteLLM](https://docs.litellm.ai) via a gateway-compatible model string. The default
-lives in `OPENSWINDLE_LLM_MODEL`. The response schema is enforced:
-`scratchpad` (private reasoning), `move`, and `table_talk` (in-character dialogue).
-Provider JSON mode is used where supported and dropped automatically where a gateway
-rejects it — the prompt contract and parser enforce the schema either way. Illegal or
-malformed outputs are rejected and reprompted with the violation explained; after the
+LLM NPCs make one stateless structured call per decision through the OpenAI SDK
+pointed at [OpenRouter](https://openrouter.ai) (universal model access, no
+per-provider request quirks). The model slug lives in `OPENSWINDLE_LLM_MODEL`;
+provider extras — such as OpenRouter's unified `reasoning` toggle — go in
+`OPENSWINDLE_LLM_EXTRA_BODY`. [Instructor](https://python.useinstructor.com) enforces
+the response schema natively: `scratchpad` (private reasoning), `move`, and
+`table_talk` (in-character dialogue). Malformed output *and* illegal moves both fail
+Pydantic validation — the server-side legality oracle is wired into Instructor's
+validation context — so Instructor reprompts with the violation explained; after the
 retry budget the deterministic scripted policy takes over (flagged in telemetry).
 
 **The LLM is a natural-language reasoner, not a calculator.** It receives the rules,
@@ -161,17 +163,27 @@ curl -s -X POST localhost:8000/matches/<id>/moves \
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `VERCEL_AI_GATEWAY_API_KEY` | — | Gateway credential for LLM opponents |
-| `OPENSWINDLE_LLM_MODEL` | configured default | Any LiteLLM model string |
+| `OPENROUTER_API_KEY` | — | OpenRouter credential for LLM opponents |
+| `OPENSWINDLE_LLM_MODEL` | configured default | Any OpenRouter model slug |
 | `OPENSWINDLE_MOCK_LLM` | `false` | Use the scripted policy instead of an LLM (offline dev/tests) |
-| `OPENSWINDLE_LLM_EXTRA_BODY` | — | JSON merged into every LLM request (e.g. disable provider thinking mode) |
-| `OPENSWINDLE_JSON_MODE_UNSUPPORTED_MODELS` | configured default | Models to skip provider JSON mode for up front |
+| `OPENSWINDLE_LLM_EXTRA_BODY` | — | JSON merged into every LLM request; `.env.example` ships `{"reasoning": {"effort": "none"}}` (cheaper, faster first token, beatable opponent) |
 | `OPENSWINDLE_CORS_ORIGINS` | `http://localhost:5173` | Allowed frontend origins (comma-separated) |
 | `OPENSWINDLE_FINISHED_MATCH_TTL_SECONDS` | `3600` | Finished-match retention time in memory |
 | `OPENSWINDLE_MAX_FINISHED_MATCHES` | `1000` | Maximum finished matches retained before pruning oldest |
 
 Match state is held in memory; matches do not survive a server restart. Finished matches
 are pruned by TTL and by the maximum retained-match cap.
+
+## Deployment
+
+- **Backend** → [Railway](https://railway.app) as a persistent container. The
+  long-lived ASGI process is what makes the in-memory match store viable in
+  production — state survives between turns without Redis. Start command:
+  `uvicorn openswindle.api:app --host 0.0.0.0 --port $PORT`. Set `OPENROUTER_API_KEY`
+  and point `OPENSWINDLE_CORS_ORIGINS` at the frontend origin.
+- **Frontend (React)** → [Vercel](https://vercel.com), pointed at the Railway API URL.
+- Do not deploy the backend to serverless/edge runtimes: cold starts drop the
+  in-memory state.
 
 ## Attribution
 

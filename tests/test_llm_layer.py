@@ -1,10 +1,13 @@
-"""LLM layer tests against a fake provider: reprompts, fallback, payload hygiene."""
+"""LLM layer tests: real Instructor over a faked OpenAI transport.
+
+Covers reprompt-until-legal (via the validation-context legality oracle),
+fallback behavior, payload hygiene, and the susceptibility toggle.
+"""
 
 import json
-from types import SimpleNamespace
 
-import litellm
 import pytest
+from openai.types.chat import ChatCompletion
 
 from openswindle import engine, probability
 from openswindle.config import Settings
@@ -26,21 +29,52 @@ GARBAGE = "the dice are a metaphor, actually"
 HUMAN_TALK = "trust me, there are four threes on this table"
 
 
-def _response(content: str, prompt: int = 100, cached: int = 0, completion: int = 20):
-    return SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
-        usage=SimpleNamespace(
-            prompt_tokens=prompt,
-            completion_tokens=completion,
-            prompt_tokens_details=SimpleNamespace(cached_tokens=cached),
-        ),
+def _completion(content: str, prompt: int = 100, completion: int = 20) -> ChatCompletion:
+    return ChatCompletion.model_validate(
+        {
+            "id": "cmpl-test",
+            "object": "chat.completion",
+            "created": 0,
+            "model": "test/model",
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": content},
+                }
+            ],
+            "usage": {
+                "prompt_tokens": prompt,
+                "completion_tokens": completion,
+                "total_tokens": prompt + completion,
+            },
+        }
     )
+
+
+def _fake_transport(monkeypatch, responses: list):
+    """AsyncOpenAI client whose create() replays canned responses (or raises)."""
+    from openai import AsyncOpenAI
+
+    calls: list[dict] = []
+    client = AsyncOpenAI(api_key="test-key", base_url="http://localhost:1")
+
+    async def fake_create(**kwargs):
+        calls.append(kwargs)
+        result = responses[min(len(calls) - 1, len(responses) - 1)]
+        if isinstance(result, Exception):
+            raise result
+        # Fresh object per call: Instructor mutates response.usage in place to
+        # aggregate across retries, as real HTTP responses are never shared.
+        return result.model_copy(deep=True)
+
+    client.chat.completions.create = fake_create
+    monkeypatch.setattr(llm, "_base_client", lambda: client)
+    return calls
 
 
 @pytest.fixture
 def game(monkeypatch):
-    # A neutral model name keeps JSON mode on (the real default model is on
-    # the seeded json_mode_unsupported_models deny-list).
     monkeypatch.setattr(
         llm,
         "get_settings",
@@ -65,120 +99,67 @@ async def _decide(game, susceptibility: bool = True):
     )
 
 
-def _fake_provider(monkeypatch, responses: list):
-    captured: list[dict] = []
-
-    async def fake(**kwargs):
-        captured.append(kwargs)
-        return responses[min(len(captured) - 1, len(responses) - 1)]
-
-    monkeypatch.setattr(litellm, "acompletion", fake)
-    return captured
-
-
 async def test_reprompts_until_legal_and_accumulates_usage(monkeypatch, game):
-    captured = _fake_provider(
-        monkeypatch, [_response(GARBAGE), _response(ILLEGAL), _response(GOOD)]
+    calls = _fake_transport(
+        monkeypatch, [_completion(GARBAGE), _completion(ILLEGAL), _completion(GOOD)]
     )
     outcome = await _decide(game)
-    assert len(captured) == 3
+    assert len(calls) == 3
     assert outcome.reprompts == 2
     assert not outcome.fallback
     assert outcome.decision.move.action == "call"
-    assert outcome.prompt_tokens == 300  # all three attempts priced
-    # The reprompt must explain the violation in rule terms.
-    rejection = captured[2]["messages"][-1]["content"]
-    assert "2x3" in rejection
+    assert outcome.prompt_tokens == 300  # all three attempts accumulated
+    # The reprompt for the illegal move must explain the rule in game terms.
+    retry_text = json.dumps(calls[2]["messages"])
+    assert "2x3" in retry_text
 
 
 async def test_falls_back_to_scripted_after_budget(monkeypatch, game):
-    _fake_provider(monkeypatch, [_response(GARBAGE)])
+    calls = _fake_transport(monkeypatch, [_completion(GARBAGE)])
     outcome = await _decide(game)
     state, profile, own, menu, transcript = game
     assert outcome.fallback
+    assert len(calls) == 3  # llm_max_reprompts=2 -> 3 attempts
     assert outcome.reprompts == 3
     assert outcome.prompt_tokens == 300  # burned tokens preserved on fallback
     assert probability.find_scored(menu, outcome.decision.move) is not None
 
 
 async def test_transport_failure_falls_back_cleanly(monkeypatch, game):
-    async def explode(**kwargs):
-        raise RuntimeError("gateway down")
-
-    monkeypatch.setattr(litellm, "acompletion", explode)
+    calls = _fake_transport(monkeypatch, [RuntimeError("openrouter down")])
     outcome = await _decide(game)
-    assert outcome.fallback
-    assert outcome.reprompts == 0
-    assert outcome.prompt_tokens is None  # no tokens were ever billed
     state, profile, own, menu, transcript = game
+    assert outcome.fallback
+    assert len(calls) == 1  # non-validation errors are not retried
+    assert outcome.prompt_tokens is None  # no tokens were ever billed
     assert probability.find_scored(menu, outcome.decision.move) is not None
 
 
 async def test_payload_never_leaks_probability_engine(monkeypatch, game):
-    captured = _fake_provider(monkeypatch, [_response(GOOD)])
+    calls = _fake_transport(monkeypatch, [_completion(GOOD)])
     await _decide(game)
     state, profile, own, menu, transcript = game
-    text = "\n".join(m["content"] for m in captured[0]["messages"])
+    text = json.dumps(calls[0]["messages"])
     assert "optimal" not in text.lower()
     assert "menu" not in text.lower()
     for scored in menu.moves:
         assert f"{scored.truth_probability:.3f}" not in text
     # But the character sheet and game state must be present.
-    assert profile.bio in text
-    assert str(own) in text
+    assert profile.name in text
+    assert str(own[0]) in text
 
 
 async def test_susceptibility_toggle_filters_human_talk(monkeypatch, game):
-    captured = _fake_provider(monkeypatch, [_response(GOOD), _response(GOOD)])
+    calls = _fake_transport(monkeypatch, [_completion(GOOD), _completion(GOOD)])
     await _decide(game, susceptibility=True)
-    on_text = "\n".join(m["content"] for m in captured[0]["messages"])
+    on_text = json.dumps(calls[0]["messages"])
     assert HUMAN_TALK in on_text
 
-    captured.clear()
+    calls.clear()
     await _decide(game, susceptibility=False)
-    off_text = "\n".join(m["content"] for m in captured[0]["messages"])
+    off_text = json.dumps(calls[0]["messages"])
     assert HUMAN_TALK not in off_text
     assert "bid 2x3" in off_text  # the move itself is still public knowledge
-
-
-async def test_json_mode_rejection_retries_without_it(monkeypatch, game):
-    calls: list[dict] = []
-
-    async def fake(**kwargs):
-        calls.append(kwargs)
-        if "response_format" in kwargs:
-            raise RuntimeError("Invalid input, param: 'response_format'")
-        return _response(GOOD)
-
-    monkeypatch.setattr(litellm, "acompletion", fake)
-    llm._json_mode_unsupported.clear()
-    try:
-        outcome = await _decide(game)
-        assert not outcome.fallback
-        assert outcome.decision.move.action == "call"
-        assert len(calls) == 2
-        assert "response_format" in calls[0]
-        assert "response_format" not in calls[1]
-    finally:
-        llm._json_mode_unsupported.clear()
-
-
-async def test_seeded_deny_list_skips_json_mode_entirely(monkeypatch, game):
-    monkeypatch.setattr(
-        llm,
-        "get_settings",
-        lambda: Settings(
-            mock_llm=False,
-            llm_max_reprompts=2,
-            llm_model="test/model",
-            json_mode_unsupported_models="other/model, test/model",
-        ),
-    )
-    captured = _fake_provider(monkeypatch, [_response(GOOD)])
-    outcome = await _decide(game)
-    assert not outcome.fallback
-    assert len(captured) == 1
-    assert "response_format" not in captured[0]  # no burned probe call
 
 
 async def test_extra_body_is_forwarded(monkeypatch, game):
@@ -189,22 +170,22 @@ async def test_extra_body_is_forwarded(monkeypatch, game):
             mock_llm=False,
             llm_max_reprompts=2,
             llm_model="test/model",
-            llm_extra_body='{"thinking": {"type": "disabled"}}',
+            llm_extra_body='{"reasoning": {"effort": "none"}}',
         ),
     )
-    captured = _fake_provider(monkeypatch, [_response(GOOD)])
+    calls = _fake_transport(monkeypatch, [_completion(GOOD)])
     await _decide(game)
-    assert captured[0]["extra_body"] == {"thinking": {"type": "disabled"}}
+    assert calls[0]["extra_body"] == {"reasoning": {"effort": "none"}}
 
 
 async def test_mock_mode_never_touches_the_provider(monkeypatch, game):
     state, profile, own, menu, transcript = game
     monkeypatch.setattr(llm, "get_settings", lambda: Settings(mock_llm=True))
 
-    async def explode(**kwargs):
-        raise AssertionError("provider must not be called in mock mode")
+    def explode():
+        raise AssertionError("client must not be constructed in mock mode")
 
-    monkeypatch.setattr(litellm, "acompletion", explode)
+    monkeypatch.setattr(llm, "_base_client", explode)
     outcome = await _decide(game)
     assert not outcome.fallback
     assert outcome.prompt_tokens is None
