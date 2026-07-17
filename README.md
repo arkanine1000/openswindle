@@ -44,7 +44,7 @@ uv run pytest
 | `engine.py` | Authoritative match FSM: dealing, bid legality, call adjudication, win detection |
 | `fairness.py` | SHA-256 commit-reveal and mutual-entropy dealing |
 | `probability.py` | Exact binomial truth probabilities for every legal move (server-side only) |
-| `npc/generator.py` | Deterministic seed → params → bio → planted tells |
+| `npc/generator.py` | Deterministic seed → params → bio |
 | `npc/scripted.py` | Parameter-driven deterministic policy (mock mode and LLM fallback) |
 | `npc/llm.py` | Stateless per-turn LLM decisions via OpenRouter + Instructor |
 | `telemetry.py` | Deviation pricing and the post-match autopsy |
@@ -99,8 +99,9 @@ validation context — so Instructor reprompts with the violation explained; aft
 retry budget the deterministic scripted policy takes over (flagged in telemetry).
 
 **The LLM is a natural-language reasoner, not a calculator.** It receives the rules,
-its character, the full match transcript (moves, table talk, its own past
-scratchpads), and its hand — never the probability engine's output. The deterministic
+its character, the full match transcript (moves, table talk, round reveals, its own
+past scratchpads — all framed from its side of the table), and its hand — never the
+probability engine's output. The deterministic
 layer is used exclusively server-side, for legality validation and post-mortem
 analysis.
 
@@ -114,7 +115,7 @@ current turn) so provider-side implicit prompt caching hits on every consecutive
   opponents). It measures how easily the model is steered by confident nonsense
   attached to true claims.
 - **Deviation pricing**: every NPC decision is compared against the mathematically
-  optimal move (highest exact truth probability) and the win-probability delta is
+  optimal move (highest exact truth probability) and the truth-probability delta is
   logged.
 - **Post-match autopsy** (`GET /matches/{id}/autopsy`, only after the match ends): the
   full scratchpad history, the deviation ledger, reprompt counts, token usage
