@@ -178,13 +178,33 @@ class TranscriptEvent(BaseModel):
     """One chronological match event, used to build the NPC's LLM context.
 
     Kinds: "bid" / "call" (public moves), "talk" (table talk, either seat),
-    "scratchpad" (the NPC's own private reasoning), "reveal" (round end).
+    "scratchpad" (the NPC's own private reasoning), "reveal" (round end;
+    ``seat`` is the round's loser so renderers can frame the outcome per
+    viewer — the text itself must stay seat-free).
     """
 
     round_no: int
     seat: Seat
     kind: Literal["bid", "call", "talk", "scratchpad", "reveal"]
     text: str
+
+
+def reveal_event(reveal: RoundReveal) -> TranscriptEvent:
+    """The transcript entry for a round end, shared by every match driver.
+
+    Seat labels are internal — a viewer-facing renderer decides how to name
+    the loser (carried in ``seat``), so the text must never contain one.
+    """
+    return TranscriptEvent(
+        round_no=reveal.round_no,
+        seat=reveal.loser,
+        kind="reveal",
+        text=(
+            f"round ended: final bid {reveal.final_bid}, "
+            f"actual count {reveal.actual_count} "
+            f"({'bid met' if reveal.bid_met else 'bid not met'})"
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

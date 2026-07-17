@@ -6,6 +6,7 @@ import pytest
 from openswindle import fairness
 from openswindle.api import app
 from openswindle.models import Bid
+from openswindle.store import store
 
 
 @pytest.fixture
@@ -211,3 +212,42 @@ async def test_scripted_telemetry_marks_susceptibility_off(client):
     assert decisions
     assert all(not decision["susceptibility_on"] for decision in decisions)
     assert all(decision["human_table_talk_seen"] is None for decision in decisions)
+
+
+async def test_transcript_logs_move_before_talk_and_seat_free_reveals(client):
+    created = await create_match(
+        client, dice_per_player=2, opponent_type="llm", npc_seed="seed 4471"
+    )
+    match_id = created["match_id"]
+    headers = {"X-Player-Token": created["tokens"]["a"]}
+    view = created["view"]
+    for _ in range(200):
+        if view["phase"] == "finished":
+            break
+        if view["turn"] != "a":
+            refreshed = await client.get(f"/matches/{match_id}", headers=headers)
+            view = refreshed.json()
+            continue
+        bid = raise_over(view)
+        move = {"action": "bid", "bid": bid} if bid else {"action": "call"}
+        response = await client.post(
+            f"/matches/{match_id}/moves",
+            json={"move": move, "table_talk": "watch closely"},
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        view = response.json()["view"]
+    assert view["phase"] == "finished"
+
+    transcript = store.get(match_id).transcript
+    # Table talk is said as the move is made: it must directly follow its move.
+    talk_indices = [i for i, e in enumerate(transcript) if e.kind == "talk" and e.seat == "a"]
+    assert talk_indices
+    for i in talk_indices:
+        assert transcript[i - 1].kind in ("bid", "call")
+        assert transcript[i - 1].seat == "a"
+    # Reveal events carry the loser in seat and never leak seat labels in text.
+    reveals = [e for e in transcript if e.kind == "reveal"]
+    assert reveals
+    assert [e.seat for e in reveals] == [r["loser"] for r in view["reveals"]]
+    assert all("seat" not in e.text for e in reveals)

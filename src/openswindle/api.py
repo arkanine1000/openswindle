@@ -21,6 +21,7 @@ from .models import (
     Seat,
     TranscriptEvent,
     other_seat,
+    reveal_event,
 )
 from .npc import generator, llm, scripted
 from .store import MatchRecord, store
@@ -124,10 +125,6 @@ def _view(state: MatchState, seat: Seat) -> PublicMatchView:
 def _log_move(
     record: MatchRecord, seat: Seat, move: Move, table_talk: str | None, round_no: int
 ) -> None:
-    if table_talk:
-        record.transcript.append(
-            TranscriptEvent(round_no=round_no, seat=seat, kind="talk", text=table_talk)
-        )
     if move.action == "bid":
         record.transcript.append(
             TranscriptEvent(round_no=round_no, seat=seat, kind="bid", text=str(move.bid))
@@ -136,16 +133,15 @@ def _log_move(
         record.transcript.append(
             TranscriptEvent(round_no=round_no, seat=seat, kind="call", text="call")
         )
+    # Table talk is said as the move is made; it follows the move it dresses.
+    if table_talk:
+        record.transcript.append(
+            TranscriptEvent(round_no=round_no, seat=seat, kind="talk", text=table_talk)
+        )
 
 
 def _log_reveal(record: MatchRecord, reveal: RoundReveal) -> None:
-    text = (
-        f"round ended: final bid {reveal.final_bid}, actual count {reveal.actual_count} "
-        f"({'bid met' if reveal.bid_met else 'bid not met'}); seat {reveal.loser} lost a die"
-    )
-    record.transcript.append(
-        TranscriptEvent(round_no=reveal.round_no, seat=reveal.caller, kind="reveal", text=text)
-    )
+    record.transcript.append(reveal_event(reveal))
 
 
 async def _npc_take_turns(record: MatchRecord) -> tuple[list[NPCEvent], list[RoundReveal]]:

@@ -11,7 +11,14 @@ from openai.types.chat import ChatCompletion
 
 from openswindle import engine, probability
 from openswindle.config import Settings
-from openswindle.models import Bid, BidMove, MatchConfig, TranscriptEvent
+from openswindle.models import (
+    Bid,
+    BidMove,
+    MatchConfig,
+    RoundReveal,
+    TranscriptEvent,
+    reveal_event,
+)
 from openswindle.npc import generator, llm
 
 GOOD = json.dumps(
@@ -190,3 +197,30 @@ async def test_mock_mode_never_touches_the_provider(monkeypatch, game):
     assert not outcome.fallback
     assert outcome.prompt_tokens is None
     assert probability.find_scored(menu, outcome.decision.move) is not None
+
+
+def test_reveal_is_rendered_in_the_npc_frame():
+    """Round-end lines must name the loser as you/opponent, never a seat letter
+    the character has no way to resolve."""
+
+    def reveal(loser):
+        return reveal_event(
+            RoundReveal(
+                round_no=2,
+                hands={"a": [1], "b": [4]},
+                salts={"a": "aa", "b": "bb"},
+                commitments={"a": "ca", "b": "cb"},
+                final_bid=Bid(quantity=3, face=4),
+                caller="a",
+                actual_count=2,
+                bid_met=False,
+                loser=loser,
+            )
+        )
+
+    npc_lost = llm._transcript_block([reveal("b")], "b", True)
+    assert "you lost a die" in npc_lost
+    human_lost = llm._transcript_block([reveal("a")], "b", True)
+    assert "opponent lost a die" in human_lost
+    for block in (npc_lost, human_lost):
+        assert "seat a" not in block and "seat b" not in block

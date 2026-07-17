@@ -37,6 +37,7 @@ from .models import (
     Seat,
     TranscriptEvent,
     other_seat,
+    reveal_event,
 )
 from .npc import generator, llm, scripted
 from .npc.generator import stable_hash
@@ -130,13 +131,14 @@ def _log_move(
     table_talk: str | None,
     round_no: int,
 ) -> None:
+    kind = "bid" if move.action == "bid" else "call"
+    text = str(move.bid) if move.action == "bid" else "call"
+    transcript.append(TranscriptEvent(round_no=round_no, seat=seat, kind=kind, text=text))
+    # Table talk is said as the move is made; it follows the move it dresses.
     if table_talk:
         transcript.append(
             TranscriptEvent(round_no=round_no, seat=seat, kind="talk", text=table_talk)
         )
-    kind = "bid" if move.action == "bid" else "call"
-    text = str(move.bid) if move.action == "bid" else "call"
-    transcript.append(TranscriptEvent(round_no=round_no, seat=seat, kind=kind, text=text))
 
 
 async def _play_match(
@@ -169,8 +171,10 @@ async def _play_match(
         if seat == PROBE_SEAT:
             decision = scripted.decide(probe_profile, menu, state.round)
             talk = _probe_talk(talk_rng, own)
-            engine.apply_move(state, PROBE_SEAT, decision.move, talk)
+            reveal = engine.apply_move(state, PROBE_SEAT, decision.move, talk)
             _log_move(transcript, PROBE_SEAT, decision.move, talk, round_no)
+            if reveal is not None:
+                transcript.append(reveal_event(reveal))
             if options.verbose:
                 move_text = str(decision.move.bid) if decision.move.action == "bid" else "call"
                 said = f' said "{talk}"' if talk else ""
@@ -216,8 +220,10 @@ async def _play_match(
                 round_no=round_no, seat=NPC_SEAT, kind="scratchpad", text=decision.scratchpad
             )
         )
-        engine.apply_move(state, NPC_SEAT, decision.move, decision.table_talk or None)
+        reveal = engine.apply_move(state, NPC_SEAT, decision.move, decision.table_talk or None)
         _log_move(transcript, NPC_SEAT, decision.move, decision.table_talk or None, round_no)
+        if reveal is not None:
+            transcript.append(reveal_event(reveal))
         if options.verbose:
             record = decisions[-1]
             move_text = str(decision.move.bid) if decision.move.action == "bid" else "call"

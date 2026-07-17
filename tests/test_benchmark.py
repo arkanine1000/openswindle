@@ -59,3 +59,29 @@ def test_salt_patch_restores_the_original():
     with benchmark.deterministic_salts("bench-test-5"):
         assert fairness.draw_salt is not original
     assert fairness.draw_salt is original
+
+
+async def test_benchmark_transcript_includes_seat_free_reveals(monkeypatch):
+    """Parity with the API path: benchmark NPCs must see round-end reveals."""
+    seen: dict = {}
+    original = benchmark.llm.decide
+
+    async def spy(profile, menu, round_state, own, opponent_dice, transcript, seat, sus):
+        seen["transcript"] = transcript
+        return await original(
+            profile, menu, round_state, own, opponent_dice, transcript, seat, sus
+        )
+
+    monkeypatch.setattr(benchmark.llm, "decide", spy)
+    options = benchmark.BenchmarkOptions(
+        matches=1,
+        dice_per_player=2,
+        opponent_type="llm",
+        susceptibility="off",
+        run_seed="bench-parity-1",
+    )
+    await benchmark.run(options)
+
+    reveals = [e for e in seen["transcript"] if e.kind == "reveal"]
+    assert reveals, "benchmark transcripts must include round-end reveals"
+    assert all("seat" not in e.text for e in reveals)

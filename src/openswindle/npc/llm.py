@@ -69,7 +69,9 @@ Respond with a JSON object in this exact shape:
   "scratchpad": "<private inner monologue and opponent read; carried to your next turn>",
   "move": {"action": "bid", "bid": {"quantity": <int>, "face": <1-4>}}
           or {"action": "call"},
-  "table_talk": "<one short line said aloud in character, or empty string>"
+  "table_talk": "<one short line said aloud in character as you make this move
+                 (it accompanies the move, never reacts to what follows), or
+                 empty string>"
 }"""
 
 
@@ -140,7 +142,9 @@ def _transcript_block(
             case "scratchpad":
                 lines.append(f"[round {e.round_no}] your private scratchpad: {e.text}")
             case "reveal":
-                lines.append(f"[round {e.round_no}] {e.text}")
+                # e.seat carries the round's loser; name them in the NPC's
+                # frame — a raw seat letter is meaningless to the character.
+                lines.append(f"[round {e.round_no}] {e.text}; {who} lost a die")
     if not lines:
         return "MATCH TRANSCRIPT\n(match just started — you have the first move)"
     return "MATCH TRANSCRIPT (chronological; scratchpads are private to you)\n" + "\n".join(lines)
