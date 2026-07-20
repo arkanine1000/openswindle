@@ -184,7 +184,8 @@ are pruned by TTL and by the maximum retained-match cap.
   production — state survives between turns without Redis. Start command:
   `uvicorn openswindle.api:app --host 0.0.0.0 --port $PORT`. Set `OPENROUTER_API_KEY`
   and point `OPENSWINDLE_CORS_ORIGINS` at the frontend origin.
-- **Frontend (React)** → [Vercel](https://vercel.com), pointed at the Railway API URL.
+- **Frontend (React)** → Vercel, pointed at the Railway API URL; steps in the
+  [client README](https://github.com/arkanine1000/openswindle-web#deployment).
 - Do not deploy the backend to serverless/edge runtimes: cold starts drop the
   in-memory state.
 
