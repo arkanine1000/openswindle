@@ -12,7 +12,7 @@ class Settings(BaseSettings):
 
     llm_model: str = "deepseek/deepseek-v4-flash"
     mock_llm: bool = False
-    cors_origins: str = "http://localhost:5173"
+    cors_origins: str = "http://localhost:5174"
     llm_max_reprompts: int = 2
     # JSON object merged into every completion request (provider extras, e.g.
     # OpenRouter's unified reasoning control: {"reasoning": {"effort": "none"}}).

@@ -168,7 +168,7 @@ curl -s -X POST localhost:8000/matches/<id>/moves \
 | `OPENSWINDLE_LLM_MODEL` | configured default | Any OpenRouter model slug |
 | `OPENSWINDLE_MOCK_LLM` | `false` | Use the scripted policy instead of an LLM (offline dev/tests) |
 | `OPENSWINDLE_LLM_EXTRA_BODY` | — | JSON merged into every LLM request; `.env.example` ships `{"reasoning": {"effort": "none"}}` (cheaper, faster first token, beatable opponent) |
-| `OPENSWINDLE_CORS_ORIGINS` | `http://localhost:5173` | Allowed frontend origins (comma-separated) |
+| `OPENSWINDLE_CORS_ORIGINS` | `http://localhost:5174` | Allowed frontend origins (comma-separated) |
 | `OPENSWINDLE_FINISHED_MATCH_TTL_SECONDS` | `3600` | Finished-match retention time in memory |
 | `OPENSWINDLE_MAX_FINISHED_MATCHES` | `1000` | Maximum finished matches retained before pruning oldest |
 
