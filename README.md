@@ -10,7 +10,8 @@ well (and how honestly) an LLM plays.
 
 The React frontend lives in its own repo —
 [**openswindle-web**](https://github.com/arkanine1000/openswindle-web) — and is pointed at this
-API. Also MIT.
+API. Also MIT. **Play the deployed game at
+[openswindle-web.vercel.app](https://openswindle-web.vercel.app).**
 
 ## The game
 
