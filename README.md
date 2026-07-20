@@ -8,7 +8,9 @@ game server: it deals hands, validates every move, adjudicates calls, proves its
 fairness cryptographically, generates reproducible NPC opponents, and benchmarks how
 well (and how honestly) an LLM plays.
 
-A React frontend is developed separately and pointed at this API.
+The React frontend lives in its own repo —
+[**openswindle-web**](https://github.com/arkanine1000/openswindle-web) — and is pointed at this
+API. Also MIT.
 
 ## The game
 
