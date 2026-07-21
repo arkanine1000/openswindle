@@ -67,6 +67,24 @@ def test_call_adjudication_and_die_loss():
     assert state.round.round_no == 2
 
 
+def test_call_table_talk_carried_into_reveal():
+    state = make_match(3)
+    engine.apply_move(state, "a", BidMove(bid=Bid(quantity=1, face=1)))
+    reveal = engine.apply_move(state, "b", CallMove(), table_talk="You're bluffing.")
+    assert reveal is not None
+    # The call is not a bid, so bid_history never holds it — the reveal is the
+    # only place the caller's words survive for the opponent to read.
+    assert reveal.table_talk == "You're bluffing."
+
+
+def test_call_without_table_talk_leaves_reveal_talk_none():
+    state = make_match(3)
+    engine.apply_move(state, "a", BidMove(bid=Bid(quantity=1, face=1)))
+    reveal = engine.apply_move(state, "b", CallMove())
+    assert reveal is not None
+    assert reveal.table_talk is None
+
+
 def test_overbid_punished_on_call():
     state = make_match(2)
     total_dice = sum(state.dice_counts.values())

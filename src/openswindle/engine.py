@@ -79,7 +79,7 @@ def apply_move(
 
     if move.action == "bid":
         return _apply_bid(state, seat, move.bid, table_talk)
-    return _apply_call(state, seat)
+    return _apply_call(state, seat, table_talk)
 
 
 def _apply_bid(
@@ -101,7 +101,9 @@ def _apply_bid(
     return None
 
 
-def _apply_call(state: MatchState, caller: Seat) -> RoundReveal:
+def _apply_call(
+    state: MatchState, caller: Seat, table_talk: str | None = None
+) -> RoundReveal:
     final_bid = state.round.current_bid
     if final_bid is None:
         raise IllegalMoveError("Cannot call before any bid has been made")
@@ -122,6 +124,7 @@ def _apply_call(state: MatchState, caller: Seat) -> RoundReveal:
         actual_count=actual,
         bid_met=bid_met,
         loser=loser,
+        table_talk=table_talk or None,
     )
     state.reveals.append(reveal)
     state.dice_counts[loser] -= 1

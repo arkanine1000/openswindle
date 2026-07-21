@@ -13,7 +13,6 @@ from .engine import IllegalMoveError, MatchFinishedError, NotYourTurnError
 from .models import (
     Autopsy,
     MatchConfig,
-    MatchState,
     Move,
     NPCProfile,
     PublicMatchView,
@@ -106,7 +105,14 @@ def _authed_seat(record: MatchRecord, token: str | None) -> Seat:
     return seat
 
 
-def _view(state: MatchState, seat: Seat) -> PublicMatchView:
+def _view(record: MatchRecord, seat: Seat) -> PublicMatchView:
+    state = record.state
+    # The opponent is "present" once its seat's token has been handed out. For
+    # NPC matches that seat is never issued, but the NPC is always at the table.
+    opponent_present = (
+        state.config.opponent_type != "human"
+        or other_seat(seat) in record.issued_seats
+    )
     return PublicMatchView(
         match_id=state.match_id,
         seat=seat,
@@ -119,6 +125,7 @@ def _view(state: MatchState, seat: Seat) -> PublicMatchView:
         commitments=state.round.commitments,
         bid_history=state.round.bid_history,
         reveals=state.reveals,
+        opponent_present=opponent_present,
     )
 
 
@@ -253,7 +260,7 @@ async def create_match(request: CreateMatchRequest) -> CreateMatchResponse:
         tokens=store.issued_tokens(record),
         npc_name=profile.name if profile else None,
         npc_bio=profile.bio if profile else None,
-        view=_view(state, "a"),
+        view=_view(record, "a"),
     )
 
 
@@ -274,7 +281,7 @@ async def join_match(match_id: str) -> JoinMatchResponse:
         match_id=record.state.match_id,
         token=token,
         seat="b",
-        view=_view(record.state, "b"),
+        view=_view(record, "b"),
     )
 
 
@@ -284,7 +291,7 @@ async def get_match(
 ) -> PublicMatchView:
     record = _get_record(match_id)
     seat = _authed_seat(record, x_player_token)
-    return _view(record.state, seat)
+    return _view(record, seat)
 
 
 @app.post("/matches/{match_id}/moves", response_model=MoveResponse)
@@ -319,7 +326,7 @@ async def submit_move(
             reveals.extend(npc_reveals)
 
         store.mark_finished(record)
-        return MoveResponse(view=_view(state, seat), npc_events=npc_events, reveals=reveals)
+        return MoveResponse(view=_view(record, seat), npc_events=npc_events, reveals=reveals)
 
 
 @app.post("/matches/{match_id}/abort", response_model=MoveResponse)
@@ -334,7 +341,7 @@ async def abort_match(
         reveal = engine.abort_match(record.state)
         _log_reveal(record, reveal)
         store.mark_finished(record)
-        return MoveResponse(view=_view(record.state, seat), npc_events=[], reveals=[reveal])
+        return MoveResponse(view=_view(record, seat), npc_events=[], reveals=[reveal])
 
 
 @app.get("/matches/{match_id}/npc/profile", response_model=NPCPublicProfile)

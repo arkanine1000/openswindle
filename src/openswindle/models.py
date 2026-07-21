@@ -77,6 +77,9 @@ class RoundReveal(BaseModel):
     actual_count: int
     bid_met: bool
     loser: Seat
+    # The caller's parting words. A call is not a bid, so it never lands in
+    # bid_history; carrying it here is how the opponent gets to hear it.
+    table_talk: str | None = None
 
 
 class RoundState(BaseModel):
@@ -121,6 +124,9 @@ class PublicMatchView(BaseModel):
     commitments: dict[Seat, str]
     bid_history: list[BidRecord]
     reveals: list[RoundReveal]
+    # False only while a human match is still waiting for seat B to join;
+    # always True against an NPC. Drives the client's "waiting" screen.
+    opponent_present: bool = True
 
 
 # ---------------------------------------------------------------------------

@@ -251,3 +251,50 @@ async def test_transcript_logs_move_before_talk_and_seat_free_reveals(client):
     assert reveals
     assert [e.seat for e in reveals] == [r["loser"] for r in view["reveals"]]
     assert all("seat" not in e.text for e in reveals)
+
+
+async def test_opponent_present_flips_when_seat_b_joins(client):
+    created = await create_match(client, dice_per_player=2, opponent_type="human")
+    match_id = created["match_id"]
+    # Seat A is alone at the table until someone claims seat B.
+    assert created["view"]["opponent_present"] is False
+
+    joined = await client.post(f"/matches/{match_id}/join")
+    assert joined.status_code == 200
+    assert joined.json()["view"]["opponent_present"] is True
+
+    # Seat A's own polled view now reflects the arrival.
+    a_view = await client.get(
+        f"/matches/{match_id}", headers={"X-Player-Token": created["tokens"]["a"]}
+    )
+    assert a_view.json()["opponent_present"] is True
+
+
+async def test_opponent_present_true_for_npc_matches(client):
+    created = await create_match(client, dice_per_player=2, opponent_type="scripted")
+    # An NPC is always at the table; seat B is never issued but is never "absent".
+    assert created["view"]["opponent_present"] is True
+
+
+async def test_call_table_talk_reaches_the_opponent(client):
+    created = await create_match(client, dice_per_player=2, opponent_type="human")
+    match_id = created["match_id"]
+    ha = {"X-Player-Token": created["tokens"]["a"]}
+    joined = await client.post(f"/matches/{match_id}/join")
+    hb = {"X-Player-Token": joined.json()["token"]}
+
+    await client.post(
+        f"/matches/{match_id}/moves",
+        json={"move": {"action": "bid", "bid": {"quantity": 1, "face": 1}}},
+        headers=ha,
+    )
+    called = await client.post(
+        f"/matches/{match_id}/moves",
+        json={"move": {"action": "call"}, "table_talk": "I don't believe you."},
+        headers=hb,
+    )
+    assert called.status_code == 200, called.text
+
+    # Seat A polls its view and reads the caller's parting words off the reveal.
+    a_view = (await client.get(f"/matches/{match_id}", headers=ha)).json()
+    assert a_view["reveals"][-1]["table_talk"] == "I don't believe you."
