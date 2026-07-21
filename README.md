@@ -144,8 +144,8 @@ uv run openswindle-benchmark --matches 5 --opponent scripted --json report.json
 |---|---|
 | `POST /matches` | Create a match; returns the creator's seat token and the initial view |
 | `POST /matches/{id}/join` | Claim seat `b` in a human-vs-human match |
-| `GET /matches/{id}` | Public view for your seat (header `X-Player-Token`) |
-| `POST /matches/{id}/moves` | Submit a move (+ optional `table_talk`); NPC replies in the same response |
+| `GET /matches/{id}` | Public view for your seat (header `X-Player-Token`); also the poll endpoint in a human match |
+| `POST /matches/{id}/moves` | Submit a move (+ optional `table_talk`); against an NPC its reply rides back in the same response |
 | `POST /matches/{id}/abort` | End the match and reveal the current round (header `X-Player-Token`) |
 | `GET /matches/{id}/npc/profile` | NPC name and bio (params stay hidden until the autopsy) |
 | `GET /matches/{id}/autopsy` | Post-match scratchpads, deviation ledger, and NPC reveal |
@@ -162,6 +162,24 @@ curl -s -X POST localhost:8000/matches/<id>/moves \
   -H 'Content-Type: application/json' -H 'X-Player-Token: <token>' \
   -d '{"move": {"action": "bid", "bid": {"quantity": 2, "face": 3}}, "table_talk": "I never lie."}'
 ```
+
+## Human vs human (invite matches)
+
+Create a match with `"opponent_type": "human"` and no NPC is generated: the server
+mints two seat tokens but returns only seat `a`'s. Share the match id as a private
+invite; whoever opens it claims seat `b` with `POST /matches/{id}/join` (a one-time
+handout — a second join is a `409`). From there both seats play through the same
+`POST /matches/{id}/moves` and `GET /matches/{id}`.
+
+Because a human opponent's move can't ride back in your own request's response, the
+waiting seat learns of it by **polling `GET /matches/{id}`** and diffing the view it
+gets back — no websockets or push channel. Two extra fields carry what polling needs:
+`PublicMatchView.opponent_present` is `false` until seat `b` joins (always `true`
+against an NPC), and a call's `table_talk` — which is never a bid, so it never lands in
+`bid_history` — rides on that round's `RoundReveal` so the opponent still hears it.
+[The web client](https://github.com/arkanine1000/openswindle-web) drives all of this
+from a shareable link. Matches live in memory, so a server restart drops one in
+progress — which stings more with a person waiting than with an NPC.
 
 ## Configuration
 
