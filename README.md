@@ -117,9 +117,11 @@ current turn) so provider-side implicit prompt caching hits on every consecutive
   payload is a toggle (on by default, forced off for human-vs-human and scripted
   opponents). It measures how easily the model is steered by confident nonsense
   attached to true claims.
-- **Deviation pricing**: every NPC decision is compared against the mathematically
-  optimal move (highest exact truth probability) and the truth-probability delta is
-  logged.
+- **Deviation pricing**: every NPC decision is compared against the *safest single-ply
+  move* (highest exact truth probability) and the truth-probability delta is logged.
+  This is not the game-theoretic optimum: it prices only immediate truth-likelihood and
+  ignores bluffing equity, information hiding, and the opponent's replies — so a
+  deliberate bluff reads as a deviation even when it is the stronger play.
 - **Post-match autopsy** (`GET /matches/{id}/autopsy`, only after the match ends): the
   full scratchpad history, the deviation ledger, reprompt counts, token usage
   (including cached tokens), and the NPC's hidden parameters.
