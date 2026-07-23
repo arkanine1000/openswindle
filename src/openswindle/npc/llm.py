@@ -152,12 +152,22 @@ def _transcript_block(
 
 def _turn_block(round_state: RoundState, own_hand: list[int], opponent_dice: int) -> str:
     current = round_state.current_bid
+    # Attribute the standing bid to the opponent and state the stance, right in
+    # the volatile tail the model leans on hardest — otherwise it can narrate
+    # its own new bid as if the opponent had claimed it.
+    if current is not None:
+        stance = (
+            f"The opponent's standing bid: {current}\n"
+            "Your move: raise it to a strictly higher bid, or call it a lie."
+        )
+    else:
+        stance = "No bid stands yet — you open this round with a bid of your choosing."
     return (
         f"YOUR TURN (round {round_state.round_no})\n"
         f"Your hidden hand: {own_hand}\n"
         f"Opponent dice count: {opponent_dice}\n"
         f"Total dice on the board: {len(own_hand) + opponent_dice}\n"
-        f"Current bid to beat: {current if current else '(none — you open the round)'}"
+        f"{stance}"
     )
 
 
