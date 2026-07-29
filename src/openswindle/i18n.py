@@ -121,7 +121,8 @@ STRINGS: dict[Locale, dict[str, str]] = {
         # turn block
         "turn_header": (
             "YOUR TURN (round {r})\nYour hidden hand: {hand}\n"
-            "Opponent dice count: {opp}\nTotal dice on the board: {total}\n"
+            "Opponent dice count: {opp}\nTotal dice on the board: {total} "
+            "(reminder: a bid counts all dice on the board)\n"
         ),
         "stance_have_bid": (
             "The opponent's standing bid: {bid}\n"
@@ -162,7 +163,8 @@ STRINGS: dict[Locale, dict[str, str]] = {
         "line_reveal": "[runda {r}] {text}; izgubljena kocka: {who}",
         "turn_header": (
             "TVOJ POTEZ (runda {r})\nTvoja skrivena šaka: {hand}\n"
-            "Protivnikov broj kocaka: {opp}\nUkupno kocaka na stolu: {total}\n"
+            "Protivnikov broj kocaka: {opp}\nUkupno kocaka na stolu: {total} "
+            "(podsjetnik: oklada broji sve kocke na stolu)\n"
         ),
         "stance_have_bid": (
             "Protivnikova trenutna oklada: {bid}\n"
