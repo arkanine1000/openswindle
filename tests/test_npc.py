@@ -61,9 +61,11 @@ def test_bio_localizes_to_croatian_gender_free():
 
 def test_croatian_scripted_chatter():
     # A very chatty character in a Croatian match should speak Croatian.
-    profile = generator.generate_npc("seed 4471", "hr")
-    chatter = {ln for pool in scripted._BID_CHATTER["hr"] for ln in [pool]}
-    assert "Hajde, iznenadi me." in chatter
+    profile, menu, state = _opening_decision("seed 4471")
+    # This specific seed/round combo yields a chatty roll.
+    decision = scripted.decide(profile, menu, state.round, locale="hr")
+    assert decision.table_talk in scripted._BID_CHATTER["hr"]
+    assert decision.table_talk != ""
 
 
 def _opening_decision(seed: str):
