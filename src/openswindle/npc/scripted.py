@@ -12,6 +12,7 @@ path, so they must never contain probability-engine data.
 
 from random import Random
 
+from ..i18n import FALLBACK, Locale
 from ..models import (
     CallMove,
     LLMDecision,
@@ -23,21 +24,41 @@ from ..models import (
 )
 from .generator import stable_hash
 
-_BID_CHATTER = [
-    "You blink too much when you bid.",
-    "The dice like me tonight.",
-    "I have counted worse hands than yours.",
-    "My old master lost a finger to a bid like that.",
-    "Go on then, surprise me.",
-    "Careful. The bones remember greed.",
-]
+# Croatian is a DRAFT pending native review. Lines stay gender-neutral toward
+# the opponent (2nd-person present, imperatives) — no he/she assumed.
+_BID_CHATTER: dict[Locale, list[str]] = {
+    "en": [
+        "You blink too much when you bid.",
+        "The dice like me tonight.",
+        "I have counted worse hands than yours.",
+        "My old master lost a finger to a bid like that.",
+        "Go on then, surprise me.",
+        "Careful. The bones remember greed.",
+    ],
+    "hr": [
+        "Previše trepćeš kad se okladiš.",
+        "Kocke me večeras vole.",
+        "Ima i gorih ruku od tvoje.",
+        "Hajde, iznenadi me.",
+        "Oprezno. Kocke pamte pohlepu.",
+        "Znam čitati lice poput tvoga.",
+    ],
+}
 
-_CALL_CHATTER = [
-    "Liar. Show me.",
-    "Bold. Foolish, but bold.",
-    "No. That story ends here.",
-    "Turn them over. Slowly.",
-]
+_CALL_CHATTER: dict[Locale, list[str]] = {
+    "en": [
+        "Liar. Show me.",
+        "Bold. Foolish, but bold.",
+        "No. That story ends here.",
+        "Turn them over. Slowly.",
+    ],
+    "hr": [
+        "Lažeš. Pokaži.",
+        "Odvažno. Glupo, ali odvažno.",
+        "Ne. Tu priča završava.",
+        "Okreni ih. Polako.",
+    ],
+}
 
 
 def _turn_rng(profile: NPCProfile, round_state: RoundState) -> Random:
@@ -45,12 +66,18 @@ def _turn_rng(profile: NPCProfile, round_state: RoundState) -> Random:
     return Random(stable_hash(key))
 
 
-def decide(profile: NPCProfile, menu: ProbabilityMenu, round_state: RoundState) -> LLMDecision:
+def decide(
+    profile: NPCProfile,
+    menu: ProbabilityMenu,
+    round_state: RoundState,
+    locale: Locale = FALLBACK,
+) -> LLMDecision:
     rng = _turn_rng(profile, round_state)
     p = profile.params
     move = _choose_move(p, menu, rng)
 
-    pool = _CALL_CHATTER if move.action == "call" else _BID_CHATTER
+    chatter = _CALL_CHATTER if move.action == "call" else _BID_CHATTER
+    pool = chatter.get(locale, chatter[FALLBACK])
     table_talk = rng.choice(pool) if rng.random() < p.chattiness else ""
     scratch = (
         f"[scripted] instincts: deception={p.deception} "

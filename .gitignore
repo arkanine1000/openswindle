@@ -24,3 +24,4 @@ build/
 # Local agent context (never committed)
 AGENTS.md
 CHANGELOG.md
+openswindle-web

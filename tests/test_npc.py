@@ -42,6 +42,30 @@ def test_bio_derives_from_params():
         assert expected_mouth in bio
 
 
+def test_bio_localizes_to_croatian_gender_free():
+    for i in range(20):
+        seed = f"seed {i}"
+        en = generator.generate_npc(seed, "en")
+        hr = generator.generate_npc(seed, "hr")
+        # Same seed = same character, only the language differs.
+        assert hr.name == en.name
+        assert hr.params == en.params
+        assert hr.bio != en.bio
+        # No English scaffolding left in the Croatian bio.
+        assert ", and " not in hr.bio
+        assert " who " not in hr.bio
+        # Gender-free: no he/she pronouns leaked in.
+        assert " on " not in f" {hr.bio} "
+        assert " ona " not in f" {hr.bio} "
+
+
+def test_croatian_scripted_chatter():
+    # A very chatty character in a Croatian match should speak Croatian.
+    profile = generator.generate_npc("seed 4471", "hr")
+    chatter = {ln for pool in scripted._BID_CHATTER["hr"] for ln in [pool]}
+    assert "Hajde, iznenadi me." in chatter
+
+
 def _opening_decision(seed: str):
     state = engine.create_match(MatchConfig(dice_per_player=4, opponent_type="scripted"))
     profile = generator.generate_npc(seed)

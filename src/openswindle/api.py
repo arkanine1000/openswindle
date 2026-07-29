@@ -148,7 +148,7 @@ def _log_move(
 
 
 def _log_reveal(record: MatchRecord, reveal: RoundReveal) -> None:
-    record.transcript.append(reveal_event(reveal))
+    record.transcript.append(reveal_event(reveal, record.state.config.locale))
 
 
 async def _npc_take_turns(record: MatchRecord) -> tuple[list[NPCEvent], list[RoundReveal]]:
@@ -179,9 +179,12 @@ async def _npc_take_turns(record: MatchRecord) -> tuple[list[NPCEvent], list[Rou
                 record.transcript,
                 NPC_SEAT,
                 susceptibility_on,
+                state.config.locale,
             )
         else:
-            outcome = llm.LLMOutcome(decision=scripted.decide(profile, menu, state.round))
+            outcome = llm.LLMOutcome(
+                decision=scripted.decide(profile, menu, state.round, state.config.locale)
+            )
 
         decision = outcome.decision
         last_human_talk = next(
@@ -252,7 +255,7 @@ async def create_match(request: CreateMatchRequest) -> CreateMatchResponse:
     state = engine.create_match(config)
     profile: NPCProfile | None = None
     if config.opponent_type != "human":
-        profile = generator.generate_npc(config.npc_seed)
+        profile = generator.generate_npc(config.npc_seed, config.locale)
 
     record = store.add(state, profile)
     return CreateMatchResponse(

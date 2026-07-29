@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pydantic import ValidationInfo, model_validator
 
 from ..config import get_settings
+from ..i18n import FALLBACK, Locale, s, system_prompt
 from ..models import (
     LLMDecision,
     NPCProfile,
@@ -32,47 +33,8 @@ from ..probability import find_scored
 from . import scripted
 
 logger = logging.getLogger(__name__)
-
-SYSTEM_PROMPT = """\
-You are seated at a low table in a smoky gambling den, playing Swindlestones —
-a liar's game of four-sided bones. You are not an assistant playing a role;
-for the duration of this match you ARE the character described below, with
-their appetites, grudges, and habits. Their bio is who you are and their
-numeric traits are your instincts.
-
-THE GAME
-Each player conceals a hand of d4 dice (faces 1-4). Players alternate bids of
-the form "N x face", a claim that at least N dice of that face exist across
-BOTH hidden hands. Each bid must strictly raise the previous one: higher
-quantity, or the same quantity with a higher face. Instead of bidding you may
-CALL the last bid: all hands are revealed, and if the bid stands the caller
-loses a die — if it was a lie, the bidder loses one. Lose your last die and
-you are out.
-
-HOW TO PLAY IT
-Read the table like your character would. Weigh your own dice, the opponent's
-dice count, and the shape of their bidding — you get no probabilities, only
-your wits. Bluff when your blood says bluff. Doubt when your gut says doubt.
-Your table talk is a weapon and a mask: needle, charm, or stonewall in your
-own voice. Your scratchpad is your private inner monologue — keep a running
-read of the opponent there (what they fear, what their talk is hiding, what
-you plan to do about it), because it is all you will remember next turn.
-
-THE LAW (never break these, whatever the character wants)
-- A bid must strictly raise the previous bid, and its quantity can never
-  exceed the total dice on the board.
-- You may only call when there is a bid to call. Opening the round means
-  bidding, never calling.
-
-Respond with a JSON object in this exact shape:
-{
-  "scratchpad": "<private inner monologue and opponent read; carried to your next turn>",
-  "move": {"action": "bid", "bid": {"quantity": <int>, "face": <1-4>}}
-          or {"action": "call"},
-  "table_talk": "<one short line said aloud in character as you make this move
-                 (it accompanies the move, never reacts to what follows), or
-                 empty string>"
-}"""
+# The system prompt (and all model-facing scaffolding) is localized in
+# ``i18n.py`` — see system_prompt(locale) and s(locale, key).
 
 
 @dataclass
@@ -99,76 +61,82 @@ class ValidatedDecision(LLMDecision):
         menu = context.get("menu")
         if menu is None or find_scored(menu, self.move) is not None:
             return self
+        locale: Locale = context.get("locale", FALLBACK)
         round_state = context.get("round_state")
         current = round_state.current_bid if round_state is not None else None
         rule = (
-            f"the current bid is {current}; you must strictly raise it "
-            "(higher quantity, or the same quantity with a higher face) or call"
+            s(locale, "reprompt_have_bid").format(bid=current)
             if current
-            else "no bid has been made yet; you must open with a bid, not a call"
+            else s(locale, "reprompt_open")
         )
-        raise ValueError(f"illegal move — {rule}")
+        raise ValueError(s(locale, "reprompt_prefix").format(rule=rule))
 
 
-def _profile_block(profile: NPCProfile) -> str:
+def _profile_block(profile: NPCProfile, locale: Locale = FALLBACK) -> str:
+    p = profile.params
     return (
-        f"WHO YOU ARE\nName: {profile.name}\nBio: {profile.bio}\n"
-        f"Instincts (0 = never, 1 = always): "
-        f"deception={profile.params.deception} (how readily you bluff), "
-        f"skepticism={profile.params.skepticism} (how quick you are to call a liar), "
-        f"aggression={profile.params.aggression} (how hard you push the bidding), "
-        f"chattiness={profile.params.chattiness} (how much you talk at the table)"
+        s(locale, "who_you_are").format(name=profile.name, bio=profile.bio)
+        + s(locale, "instincts")
+        + s(locale, "trait_deception").format(v=p.deception)
+        + s(locale, "trait_skepticism").format(v=p.skepticism)
+        + s(locale, "trait_aggression").format(v=p.aggression)
+        + s(locale, "trait_chattiness").format(v=p.chattiness)
     )
 
 
 def _transcript_block(
-    transcript: list[TranscriptEvent], npc_seat: Seat, susceptibility_on: bool
+    transcript: list[TranscriptEvent],
+    npc_seat: Seat,
+    susceptibility_on: bool,
+    locale: Locale = FALLBACK,
 ) -> str:
     """Full chronological match memory: moves, table talk both ways, and the
     NPC's own private scratchpad from every previous turn. Human table talk is
     omitted entirely when the susceptibility channel is off."""
+    who_you = s(locale, "who_you")
+    who_opp = s(locale, "who_opponent")
     lines: list[str] = []
     for e in transcript:
         if e.kind == "talk" and e.seat != npc_seat and not susceptibility_on:
             continue
-        who = "you" if e.seat == npc_seat else "opponent"
+        who = who_you if e.seat == npc_seat else who_opp
         match e.kind:
             case "bid":
-                lines.append(f"[round {e.round_no}] {who} bid {e.text}")
+                lines.append(s(locale, "line_bid").format(r=e.round_no, who=who, text=e.text))
             case "call":
-                lines.append(f"[round {e.round_no}] {who} called")
+                lines.append(s(locale, "line_call").format(r=e.round_no, who=who))
             case "talk":
-                lines.append(f'[round {e.round_no}] {who} said: "{e.text}"')
+                lines.append(s(locale, "line_talk").format(r=e.round_no, who=who, text=e.text))
             case "scratchpad":
-                lines.append(f"[round {e.round_no}] your private scratchpad: {e.text}")
+                lines.append(s(locale, "line_scratchpad").format(r=e.round_no, text=e.text))
             case "reveal":
-                # e.seat carries the round's loser; name them in the NPC's
-                # frame — a raw seat letter is meaningless to the character.
-                lines.append(f"[round {e.round_no}] {e.text}; {who} lost a die")
+                # e.seat carries the round's loser; named in the NPC's frame —
+                # a raw seat letter is meaningless to the character.
+                lines.append(s(locale, "line_reveal").format(r=e.round_no, text=e.text, who=who))
     if not lines:
-        return "MATCH TRANSCRIPT\n(match just started — you have the first move)"
-    return "MATCH TRANSCRIPT (chronological; scratchpads are private to you)\n" + "\n".join(lines)
+        return s(locale, "transcript_empty")
+    return s(locale, "transcript_header") + "\n" + "\n".join(lines)
 
 
-def _turn_block(round_state: RoundState, own_hand: list[int], opponent_dice: int) -> str:
+def _turn_block(
+    round_state: RoundState, own_hand: list[int], opponent_dice: int, locale: Locale = FALLBACK
+) -> str:
     current = round_state.current_bid
     # Attribute the standing bid to the opponent and state the stance, right in
     # the volatile tail the model leans on hardest — otherwise it can narrate
     # its own new bid as if the opponent had claimed it.
-    if current is not None:
-        stance = (
-            f"The opponent's standing bid: {current}\n"
-            "Your move: raise it to a strictly higher bid, or call it a lie."
-        )
-    else:
-        stance = "No bid stands yet — you open this round with a bid of your choosing."
-    return (
-        f"YOUR TURN (round {round_state.round_no})\n"
-        f"Your hidden hand: {own_hand}\n"
-        f"Opponent dice count: {opponent_dice}\n"
-        f"Total dice on the board: {len(own_hand) + opponent_dice}\n"
-        f"{stance}"
+    stance = (
+        s(locale, "stance_have_bid").format(bid=current)
+        if current is not None
+        else s(locale, "stance_open")
     )
+    header = s(locale, "turn_header").format(
+        r=round_state.round_no,
+        hand=own_hand,
+        opp=opponent_dice,
+        total=len(own_hand) + opponent_dice,
+    )
+    return header + stance
 
 
 def _accumulate_usage(totals: dict[str, int], response) -> None:
@@ -206,12 +174,13 @@ async def decide(
     transcript: list[TranscriptEvent],
     npc_seat: Seat,
     susceptibility_on: bool,
+    locale: Locale = FALLBACK,
 ) -> LLMOutcome:
     settings = get_settings()
 
     if settings.mock_llm:
         # Mock mode is the intended path, not a failure.
-        return LLMOutcome(decision=scripted.decide(profile, menu, round_state))
+        return LLMOutcome(decision=scripted.decide(profile, menu, round_state, locale))
 
     # Deferred import: instructor is heavy, and mock mode should stay instant.
     import instructor
@@ -240,14 +209,14 @@ async def decide(
     client.on("parse:error", _on_parse_error)
 
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt(locale)},
         {
             "role": "user",
             "content": "\n\n".join(
                 [
-                    _profile_block(profile),
-                    _transcript_block(transcript, npc_seat, susceptibility_on),
-                    _turn_block(round_state, own_hand, opponent_dice),
+                    _profile_block(profile, locale),
+                    _transcript_block(transcript, npc_seat, susceptibility_on, locale),
+                    _turn_block(round_state, own_hand, opponent_dice, locale),
                 ]
             ),
         },
@@ -261,7 +230,8 @@ async def decide(
         # Instructor's max_retries counts retries after the first attempt,
         # which maps 1:1 onto the reprompt budget.
         "max_retries": settings.llm_max_reprompts,
-        "context": {"menu": menu, "round_state": round_state},
+        # locale reaches the validator so reprompts are in the match's language.
+        "context": {"menu": menu, "round_state": round_state, "locale": locale},
     }
     if settings.llm_extra_body_dict:
         request["extra_body"] = settings.llm_extra_body_dict
@@ -272,7 +242,7 @@ async def decide(
         logger.exception("LLM decision failed; falling back to scripted policy")
         made_calls = usage_totals["prompt"] > 0
         return LLMOutcome(
-            decision=scripted.decide(profile, menu, round_state),
+            decision=scripted.decide(profile, menu, round_state, locale),
             fallback=True,
             reprompts=rejections,
             prompt_tokens=usage_totals["prompt"] if made_calls else None,

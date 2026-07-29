@@ -4,6 +4,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .i18n import FALLBACK, Locale, s
+
 Seat = Literal["a", "b"]
 Face = Annotated[int, Field(ge=1, le=4)]
 
@@ -50,6 +52,8 @@ class MatchConfig(BaseModel):
     opponent_type: OpponentType = "llm"
     npc_seed: str = "4471"
     channel_susceptibility: bool = True
+    # Language the NPC reasons and speaks in (bio, prompts, transcript, chatter).
+    locale: Literal["en", "hr"] = "en"
 
 
 class HandCommitment(BaseModel):
@@ -195,20 +199,20 @@ class TranscriptEvent(BaseModel):
     text: str
 
 
-def reveal_event(reveal: RoundReveal) -> TranscriptEvent:
+def reveal_event(reveal: RoundReveal, locale: Locale = FALLBACK) -> TranscriptEvent:
     """The transcript entry for a round end, shared by every match driver.
 
     Seat labels are internal — a viewer-facing renderer decides how to name
-    the loser (carried in ``seat``), so the text must never contain one.
+    the loser (carried in ``seat``), so the text must never contain one. The
+    text is localized so a Croatian NPC reads its memory in Croatian.
     """
+    met = s(locale, "reveal_met") if reveal.bid_met else s(locale, "reveal_not_met")
     return TranscriptEvent(
         round_no=reveal.round_no,
         seat=reveal.loser,
         kind="reveal",
-        text=(
-            f"round ended: final bid {reveal.final_bid}, "
-            f"actual count {reveal.actual_count} "
-            f"({'bid met' if reveal.bid_met else 'bid not met'})"
+        text=s(locale, "reveal_event").format(
+            bid=reveal.final_bid, count=reveal.actual_count, met=met
         ),
     )
 
