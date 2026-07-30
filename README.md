@@ -97,9 +97,17 @@ scripted triggers that would make it exploitable.
 
 LLM NPCs make one stateless structured call per decision through the OpenAI SDK
 pointed at [OpenRouter](https://openrouter.ai) (universal model access, no
-per-provider request quirks). The model slug lives in `OPENSWINDLE_LLM_MODEL`;
-provider extras — such as OpenRouter's unified `reasoning` toggle — go in
-`OPENSWINDLE_LLM_EXTRA_BODY`. [Instructor](https://python.useinstructor.com) enforces
+per-provider request quirks). The model is chosen per match from a fixed
+allowlist (`models.LLMModel`) — a client can select any allowlisted slug, but
+never an arbitrary one; `OPENSWINDLE_LLM_MODEL` is only the server-side
+fallback used when a match doesn't specify one. Each match also has a hard
+cap on NPC decisions (`OPENSWINDLE_LLM_MAX_CALLS_PER_MATCH`), sized well above
+anything a real game can reach, past which the scripted policy takes over
+silently. Provider extras — such as OpenRouter's unified `reasoning` toggle —
+go in `OPENSWINDLE_LLM_EXTRA_BODY` and apply to every allowlisted model
+alike; a model whose endpoint rejects one of those extras (e.g. mandates
+reasoning and 400s on the disable) isn't a supported case yet and shouldn't
+be added to the allowlist. [Instructor](https://python.useinstructor.com) enforces
 the response schema natively: `scratchpad` (private reasoning), `move`, and
 `table_talk` (in-character dialogue). Malformed output *and* illegal moves both fail
 Pydantic validation — the server-side legality oracle is wired into Instructor's
@@ -193,9 +201,10 @@ progress — which stings more with a person waiting than with an NPC.
 | Variable | Default | Purpose |
 |---|---|---|
 | `OPENROUTER_API_KEY` | — | OpenRouter credential for LLM opponents |
-| `OPENSWINDLE_LLM_MODEL` | configured default | Any OpenRouter model slug |
+| `OPENSWINDLE_LLM_MODEL` | `deepseek/deepseek-v4-flash` | Fallback model slug used when a match doesn't specify one (see `models.LLMModel` for the client-selectable allowlist) |
 | `OPENSWINDLE_MOCK_LLM` | `false` | Use the scripted policy instead of an LLM (offline dev/tests) |
 | `OPENSWINDLE_LLM_EXTRA_BODY` | — | JSON merged into every LLM request; `.env.example` ships `{"reasoning": {"effort": "none"}}` (cheaper, faster first token, beatable opponent) |
+| `OPENSWINDLE_LLM_MAX_CALLS_PER_MATCH` | `320` | Hard per-match cap on NPC decisions (cost/abuse control); falls back to the scripted policy once hit |
 | `OPENSWINDLE_CORS_ORIGINS` | `http://localhost:5174` | Allowed frontend origins (comma-separated) |
 | `OPENSWINDLE_FINISHED_MATCH_TTL_SECONDS` | `3600` | Finished-match retention time in memory |
 | `OPENSWINDLE_MAX_FINISHED_MATCHES` | `1000` | Maximum finished matches retained before pruning oldest |
