@@ -51,8 +51,16 @@ OpponentType = Literal["llm", "scripted", "human"]
 # way OpponentType and locale are enforced below — a client can never make
 # the server call an arbitrary model. Verify pricing/slugs at
 # openrouter.ai/models before adding or removing an entry.
+#
+# poolside/laguna-xs-2.1 was tried and dropped: a narrow coding-specialist
+# model, it handled non-English locales (hr) poorly. Prefer general-purpose
+# models here, not code-focused ones, given the locale requirement.
+#
+# minimax/minimax-m2.7 was also tried and dropped: its endpoint mandates
+# reasoning and rejects settings.llm_extra_body's unified disable outright,
+# and it's a shakier model besides. Revisit reasoning-mandatory models only
+# once that's a deliberate, supported case rather than a one-off workaround.
 LLMModel = Literal[
-    "poolside/laguna-xs-2.1",
     "deepseek/deepseek-v4-flash",
     "qwen/qwen3.5-flash-02-23",
     "z-ai/glm-5.2",
