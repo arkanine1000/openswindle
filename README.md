@@ -4,9 +4,13 @@
 
 An open-source (MIT) backend for **Swindlestones**, the d4 bluffing game from inkle's
 adaptation of *Sorcery!* — a close cousin of Liar's Dice. This repo is the authoritative
-game server: it deals hands, validates every move, adjudicates calls, proves its own
-fairness cryptographically, generates reproducible NPC opponents, and benchmarks how
-well (and how honestly) an LLM plays.
+game server:
+
+- Deals hands and validates every move
+- Adjudicates calls
+- Proves its own fairness cryptographically
+- Generates reproducible NPC opponents
+- Benchmarks how well (and how honestly) an LLM plays
 
 The React frontend lives in its own repo —
 [**openswindle-web**](https://github.com/arkanine1000/openswindle-web) — and is pointed at this
@@ -71,11 +75,12 @@ controls the outcome:
 die_i = (SHA-256(salt_a || salt_b || round_no || seat || i) mod 4) + 1
 ```
 
-Salts are 32 random bytes, drawn fresh **per hand per round** — salting per hand
-blocks dictionary attacks against the small hand space. When any round terminates
-(call or abort), both hands and both salts are revealed unconditionally. Clients can
-audit every round with `fairness.verify_commitment(salt_hex, hand, commitment)` or by
-recomputing the two hashes above themselves.
+Salts are 32 random bytes, drawn fresh **per hand per round**. Salting per hand (rather
+than once per match) blocks dictionary attacks against the small hand space. Both hands
+and both salts are revealed unconditionally whenever a round terminates, whether by
+call or abort. Clients can audit every round with
+`fairness.verify_commitment(salt_hex, hand, commitment)` or by recomputing the two
+hashes above themselves.
 
 ## NPC opponents (seed-to-bio)
 
