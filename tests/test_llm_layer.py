@@ -224,3 +224,14 @@ def test_reveal_is_rendered_in_the_npc_frame():
     assert "opponent lost a die" in human_lost
     for block in (npc_lost, human_lost):
         assert "seat a" not in block and "seat b" not in block
+
+
+def test_turn_block_tallies_own_hand_by_face():
+    """Duplicate faces are pre-counted in the model's own bid notation
+    ("N x face") so it doesn't have to tally a raw list under load."""
+    state = engine.create_match(MatchConfig(dice_per_player=3, opponent_type="llm"))
+    header = llm._turn_block(state.round, [1, 3, 3, 4], opponent_dice=2)
+    assert "1 x 1" in header
+    assert "2 x 3" in header
+    assert "1 x 4" in header
+    assert "2 x 2" not in header

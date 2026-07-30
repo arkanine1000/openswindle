@@ -118,6 +118,14 @@ def _transcript_block(
     return s(locale, "transcript_header") + "\n" + "\n".join(lines)
 
 
+def _hand_counts(own_hand: list[int]) -> str:
+    # Reuse the bid syntax ("N x face") the model already reads in THE LAW, so
+    # tallying its own duplicates doesn't ask it to hold a second notation in
+    # its head while it's also reasoning about the bid and the opponent.
+    counts = [(face, own_hand.count(face)) for face in range(1, 5) if face in own_hand]
+    return ", ".join(f"{n} x {face}" for face, n in counts)
+
+
 def _turn_block(
     round_state: RoundState, own_hand: list[int], opponent_dice: int, locale: Locale = FALLBACK
 ) -> str:
@@ -133,6 +141,7 @@ def _turn_block(
     header = s(locale, "turn_header").format(
         r=round_state.round_no,
         hand=own_hand,
+        counts=_hand_counts(own_hand),
         opp=opponent_dice,
         total=len(own_hand) + opponent_dice,
     )
