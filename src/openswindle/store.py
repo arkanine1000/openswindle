@@ -22,6 +22,10 @@ class MatchRecord:
     # Append-only: it doubles as the LLM's memory and keeps the prompt prefix
     # stable for provider-side caching.
     transcript: list[TranscriptEvent] = field(default_factory=list)
+    # Counts attempted llm.decide() calls (not raw HTTP requests — a single
+    # decide() call may itself retry on reprompt). Checked against
+    # settings.llm_max_calls_per_match before each call.
+    llm_calls: int = 0
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 

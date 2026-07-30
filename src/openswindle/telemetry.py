@@ -52,6 +52,7 @@ def build_autopsy(
     winner: Seat | None,
     profile: NPCProfile,
     decisions: list[DecisionRecord],
+    llm_model: str | None = None,
 ) -> Autopsy:
     return Autopsy(
         match_id=match_id,
@@ -59,4 +60,5 @@ def build_autopsy(
         npc_profile=profile,
         decisions=decisions,
         total_deviation_price=sum(d.deviation_price for d in decisions),
+        llm_model=llm_model,
     )

@@ -184,8 +184,10 @@ async def decide(
     npc_seat: Seat,
     susceptibility_on: bool,
     locale: Locale = FALLBACK,
+    model: str | None = None,
 ) -> LLMOutcome:
     settings = get_settings()
+    model = model or settings.llm_model
 
     if settings.mock_llm:
         # Mock mode is the intended path, not a failure.
@@ -232,7 +234,7 @@ async def decide(
     ]
 
     request: dict = {
-        "model": settings.llm_model,
+        "model": model,
         "messages": messages,
         "temperature": 1,
         "response_model": ValidatedDecision,

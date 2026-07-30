@@ -46,6 +46,20 @@ Move = Annotated[BidMove | CallMove, Field(discriminator="action")]
 
 OpponentType = Literal["llm", "scripted", "human"]
 
+# The full set of OpenRouter model slugs selectable from the client. This is
+# the allowlist: Pydantic rejects anything outside it with a 422, the same
+# way OpponentType and locale are enforced below — a client can never make
+# the server call an arbitrary model. Verify pricing/slugs at
+# openrouter.ai/models before adding or removing an entry.
+LLMModel = Literal[
+    "poolside/laguna-xs-2.1",
+    "deepseek/deepseek-v4-flash",
+    "qwen/qwen3.5-flash-02-23",
+    "z-ai/glm-5.2",
+    "google/gemini-3.5-flash-lite",
+    "moonshotai/kimi-k2.6",
+]
+
 
 class MatchConfig(BaseModel):
     dice_per_player: int = Field(default=4, ge=2, le=6)
@@ -54,6 +68,11 @@ class MatchConfig(BaseModel):
     channel_susceptibility: bool = True
     # Language the NPC reasons and speaks in (bio, prompts, transcript, chatter).
     locale: Literal["en", "hr"] = "en"
+    # Client-selected model; None means "use the server's configured default"
+    # (settings.llm_model — a plain str, not restricted to this allowlist,
+    # since it's an operator setting rather than client input). Resolved
+    # lazily wherever it's needed (api._npc_take_turns, telemetry.build_autopsy).
+    llm_model: LLMModel | None = None
 
 
 class HandCommitment(BaseModel):
@@ -246,3 +265,6 @@ class Autopsy(BaseModel):
     npc_profile: NPCProfile
     decisions: list[DecisionRecord]
     total_deviation_price: float
+    # The model that actually played this match (resolved: client's choice or
+    # the server default), None for a scripted opponent.
+    llm_model: str | None = None

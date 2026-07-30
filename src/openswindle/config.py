@@ -10,10 +10,21 @@ class Settings(BaseSettings):
         env_prefix="OPENSWINDLE_", env_file=".env", extra="ignore"
     )
 
+    # Server default when a match's MatchConfig.llm_model is unset (client
+    # didn't choose one). Not itself restricted to models.LLMModel, since an
+    # operator may run a model that isn't offered to clients.
     llm_model: str = "deepseek/deepseek-v4-flash"
     mock_llm: bool = False
     cors_origins: str = "http://localhost:5174"
     llm_max_reprompts: int = 2
+    # Hard per-match ceiling on NPC decisions, independent of which model is
+    # in play. A round's bid space is a strict total order over (quantity,
+    # face) pairs, so it can have at most total_dice*4 moves before a call is
+    # forced; summing that across every round from a match's max possible
+    # total dice (2 * MatchConfig.dice_per_player, capped at 6) down to 2
+    # gives an exact worst-case bound of ~308 moves. 320 leaves headroom.
+    # Once hit, remaining decisions fall back to the scripted policy.
+    llm_max_calls_per_match: int = 320
     # JSON object merged into every completion request (provider extras, e.g.
     # OpenRouter's unified reasoning control: {"reasoning": {"effort": "none"}}).
     llm_extra_body: str = ""

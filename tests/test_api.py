@@ -3,8 +3,9 @@
 import httpx
 import pytest
 
-from openswindle import fairness
+from openswindle import api, fairness
 from openswindle.api import app
+from openswindle.config import Settings
 from openswindle.models import Bid
 from openswindle.store import store
 
@@ -93,6 +94,70 @@ async def test_full_match_to_autopsy(client):
     for decision in body["decisions"]:
         assert decision["deviation_price"] >= -1e-9
         assert decision["scratchpad"]
+
+
+async def test_llm_model_rejects_unlisted_slug(client):
+    """The BE allowlist (models.LLMModel) must reject anything the FE didn't
+    offer — a client can never make the server call an arbitrary model."""
+    response = await client.post("/matches", json={"config": {"llm_model": "openai/gpt-5.6-luna"}})
+    assert response.status_code == 422
+
+
+async def test_llm_model_choice_reaches_the_autopsy(client):
+    created = await create_match(
+        client,
+        dice_per_player=2,
+        opponent_type="llm",
+        npc_seed="seed 4471",
+        llm_model="qwen/qwen3.5-flash-02-23",
+    )
+    match_id = created["match_id"]
+    await _finish_match_as_a(client, created)
+    autopsy = await client.get(f"/matches/{match_id}/autopsy")
+    assert autopsy.json()["llm_model"] == "qwen/qwen3.5-flash-02-23"
+
+
+async def test_llm_call_budget_exhausted_falls_back_to_scripted(client, monkeypatch):
+    """Past the per-match cap, NPC decisions must come from the scripted
+    policy (flagged as a fallback) instead of ever calling the model."""
+    monkeypatch.setattr(
+        api, "get_settings", lambda: Settings(mock_llm=True, llm_max_calls_per_match=0)
+    )
+    created = await create_match(
+        client, dice_per_player=2, opponent_type="llm", npc_seed="seed 4471"
+    )
+    match_id = created["match_id"]
+    await _finish_match_as_a(client, created)
+    autopsy = await client.get(f"/matches/{match_id}/autopsy")
+    decisions = autopsy.json()["decisions"]
+    assert decisions, "NPC decisions must be recorded"
+    assert all(d["fallback"] for d in decisions)
+
+
+async def _finish_match_as_a(client: httpx.AsyncClient, created: dict) -> dict:
+    """Play out seat a's turns (auto-raising) until the match ends."""
+    match_id = created["match_id"]
+    token = created["tokens"]["a"]
+    headers = {"X-Player-Token": token}
+    view = created["view"]
+    for _ in range(200):
+        if view["phase"] == "finished":
+            break
+        if view["turn"] != "a":
+            refreshed = await client.get(f"/matches/{match_id}", headers=headers)
+            view = refreshed.json()
+            continue
+        bid = raise_over(view)
+        move = {"action": "bid", "bid": bid} if bid else {"action": "call"}
+        response = await client.post(
+            f"/matches/{match_id}/moves",
+            json={"move": move, "table_talk": ""},
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        view = response.json()["view"]
+    assert view["phase"] == "finished"
+    return view
 
 
 async def test_abort_reveals_current_round_and_finishes(client):

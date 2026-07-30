@@ -162,6 +162,7 @@ async def _npc_take_turns(record: MatchRecord) -> tuple[list[NPCEvent], list[Rou
         state.config.opponent_type == "llm" and state.config.channel_susceptibility
     )
 
+    settings = get_settings()
     while state.phase == "bidding" and state.round.turn == NPC_SEAT:
         own_hand = state.round.hands[NPC_SEAT]
         opponent_dice = state.dice_counts[other_seat(NPC_SEAT)]
@@ -169,7 +170,13 @@ async def _npc_take_turns(record: MatchRecord) -> tuple[list[NPCEvent], list[Rou
         # exposed to the LLM.
         menu = probability.build_menu(state.round.current_bid, own_hand, opponent_dice)
 
-        if state.config.opponent_type == "llm":
+        # Budget exhaustion is silent to the player, same as the existing
+        # transport-failure fallback in llm.decide() — 320 is far beyond any
+        # realistic game (see config.llm_max_calls_per_match), so this only
+        # ever bites a pathological/adversarial match.
+        under_budget = record.llm_calls < settings.llm_max_calls_per_match
+        if state.config.opponent_type == "llm" and under_budget:
+            record.llm_calls += 1
             outcome = await llm.decide(
                 profile,
                 menu,
@@ -180,10 +187,14 @@ async def _npc_take_turns(record: MatchRecord) -> tuple[list[NPCEvent], list[Rou
                 NPC_SEAT,
                 susceptibility_on,
                 state.config.locale,
+                state.config.llm_model or settings.llm_model,
             )
         else:
             outcome = llm.LLMOutcome(
-                decision=scripted.decide(profile, menu, state.round, state.config.locale)
+                decision=scripted.decide(profile, menu, state.round, state.config.locale),
+                # A "scripted" match is configured that way, not falling back
+                # to it; an "llm" match past budget genuinely is.
+                fallback=state.config.opponent_type == "llm",
             )
 
         decision = outcome.decision
@@ -365,9 +376,13 @@ async def autopsy(match_id: str) -> Autopsy:
         raise HTTPException(
             status_code=409, detail="Autopsy is available only after the match ends"
         )
+    config = record.state.config
     return telemetry.build_autopsy(
         match_id=record.state.match_id,
         winner=record.state.winner,
         profile=record.npc_profile,
         decisions=record.decisions,
+        llm_model=(config.llm_model or get_settings().llm_model)
+        if config.opponent_type == "llm"
+        else None,
     )
