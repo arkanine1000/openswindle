@@ -21,16 +21,20 @@ Usage:
 import argparse
 import asyncio
 import contextlib
+import csv
 import dataclasses
 import hashlib
 import json
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from random import Random
 
 from . import engine, fairness, probability, telemetry
-from .config import get_settings
+from .config import Settings, get_settings
 from .models import (
+    MODEL_PROVIDER_ROUTING,
     DecisionRecord,
     MatchConfig,
     Move,
@@ -73,6 +77,9 @@ class ModeReport:
     cached_tokens: int
     completion_tokens: int
     cache_hit_rate: float | None
+    latency_mean_s: float | None
+    latency_min_s: float | None
+    latency_max_s: float | None
 
 
 @dataclass
@@ -80,6 +87,7 @@ class BenchmarkReport:
     run_seed: str
     opponent_type: str
     model: str | None
+    provider_pin: str | None
     mock_llm: bool
     matches_per_mode: int
     dice_per_player: int
@@ -143,7 +151,7 @@ def _log_move(
 
 async def _play_match(
     options: BenchmarkOptions, match_index: int, susceptibility: bool
-) -> tuple[Seat, list[DecisionRecord]]:
+) -> tuple[Seat, list[DecisionRecord], list[float]]:
     npc_seed = f"{options.npc_seed_base} {match_index}"
     config = MatchConfig(
         dice_per_player=options.dice_per_player,
@@ -157,6 +165,7 @@ async def _play_match(
     talk_rng = Random(stable_hash(f"{options.run_seed}:probe-talk:{match_index}"))
     transcript: list[TranscriptEvent] = []
     decisions: list[DecisionRecord] = []
+    latencies: list[float] = []
     # Mirror api._npc_take_turns: the channel only exists for LLM opponents.
     susceptibility_on = options.opponent_type == "llm" and susceptibility
 
@@ -195,6 +204,9 @@ async def _play_match(
             )
         else:
             outcome = llm.LLMOutcome(decision=scripted.decide(npc_profile, menu, state.round))
+        turn_elapsed = time.perf_counter() - turn_started
+        if options.opponent_type == "llm":
+            latencies.append(turn_elapsed)
 
         decision = outcome.decision
         last_probe_talk = next(
@@ -236,7 +248,7 @@ async def _play_match(
             print(
                 f"[{mode_tag}] npc {move_text} dev={record.deviation_price:.3f}"
                 f" reprompts={record.reprompts} fallback={record.fallback}{tokens}"
-                f" {time.perf_counter() - turn_started:.1f}s",
+                f" {turn_elapsed:.1f}s",
                 flush=True,
             )
 
@@ -244,13 +256,15 @@ async def _play_match(
         print(f"[sus-{'on' if susceptibility else 'off'} m{match_index + 1}] "
               f"winner: {'npc' if state.winner == NPC_SEAT else 'probe'}", flush=True)
     assert state.winner is not None
-    return state.winner, decisions
+    return state.winner, decisions, latencies
 
 
 def _aggregate(
-    susceptibility_on: bool, results: list[tuple[Seat, list[DecisionRecord]]]
+    susceptibility_on: bool,
+    results: list[tuple[Seat, list[DecisionRecord], list[float]]],
 ) -> ModeReport:
-    decisions = [d for _, match_decisions in results for d in match_decisions]
+    decisions = [d for _, match_decisions, _ in results for d in match_decisions]
+    latencies = [lat for _, _, match_latencies in results for lat in match_latencies]
     total_price = sum(d.deviation_price for d in decisions)
     optimal = sum(1 for d in decisions if d.deviation_price <= 1e-9)
     prompt = sum(d.prompt_tokens or 0 for d in decisions)
@@ -258,7 +272,7 @@ def _aggregate(
     return ModeReport(
         susceptibility_on=susceptibility_on,
         matches=len(results),
-        npc_wins=sum(1 for winner, _ in results if winner == NPC_SEAT),
+        npc_wins=sum(1 for winner, _, _ in results if winner == NPC_SEAT),
         decisions=len(decisions),
         total_deviation_price=round(total_price, 4),
         mean_deviation_price=round(total_price / max(len(decisions), 1), 4),
@@ -269,7 +283,23 @@ def _aggregate(
         cached_tokens=cached,
         completion_tokens=sum(d.completion_tokens or 0 for d in decisions),
         cache_hit_rate=round(cached / prompt, 4) if prompt else None,
+        latency_mean_s=round(sum(latencies) / len(latencies), 2) if latencies else None,
+        latency_min_s=round(min(latencies), 2) if latencies else None,
+        latency_max_s=round(max(latencies), 2) if latencies else None,
     )
+
+
+def _provider_pin(model: str | None, settings: Settings) -> str | None:
+    """Best-effort record of which provider a run was pinned to, if any —
+    either the static per-model routing in models.py or an ad-hoc override
+    via OPENSWINDLE_LLM_EXTRA_BODY (used for one-off probes of candidates
+    not yet in MODEL_PROVIDER_ROUTING)."""
+    extra_provider = settings.llm_extra_body_dict.get("provider", {}).get("order")
+    if extra_provider:
+        return ",".join(extra_provider)
+    if model and model in MODEL_PROVIDER_ROUTING:
+        return ",".join(MODEL_PROVIDER_ROUTING[model]["order"])
+    return None
 
 
 def _modes(options: BenchmarkOptions) -> list[bool]:
@@ -302,10 +332,12 @@ async def run(options: BenchmarkOptions) -> BenchmarkReport:
         delta = round(on.mean_deviation_price - off.mean_deviation_price, 4)
 
     live_llm = options.opponent_type == "llm" and not settings.mock_llm
+    model = settings.llm_model if live_llm else None
     return BenchmarkReport(
         run_seed=options.run_seed,
         opponent_type=options.opponent_type,
-        model=settings.llm_model if live_llm else None,
+        model=model,
+        provider_pin=_provider_pin(model, settings) if live_llm else None,
         mock_llm=settings.mock_llm,
         matches_per_mode=options.matches,
         dice_per_player=options.dice_per_player,
@@ -339,12 +371,84 @@ def _print_report(report: BenchmarkReport) -> None:
                 f" | tokens {mode.prompt_tokens}p/{mode.completion_tokens}c"
                 f" (cache hit {mode.cache_hit_rate:.1%})"
             )
+        if mode.latency_mean_s is not None:
+            line += (
+                f" | latency mean={mode.latency_mean_s}s"
+                f" min={mode.latency_min_s}s max={mode.latency_max_s}s"
+            )
         print(line)
     if report.susceptibility_price_delta is not None:
         print(
             "susceptibility price delta (on - off): "
             f"{report.susceptibility_price_delta:+.4f} mean deviation"
         )
+
+
+CSV_COLUMNS = [
+    "timestamp",
+    "run_seed",
+    "model",
+    "provider_pin",
+    "dice_per_player",
+    "matches",
+    "susceptibility_on",
+    "npc_wins",
+    "decisions",
+    "mean_deviation_price",
+    "optimal_move_rate",
+    "fallbacks",
+    "reprompts",
+    "prompt_tokens",
+    "cached_tokens",
+    "completion_tokens",
+    "cache_hit_rate",
+    "latency_mean_s",
+    "latency_min_s",
+    "latency_max_s",
+    "notes",
+]
+
+
+def append_csv(path: str, report: BenchmarkReport, notes: str = "") -> None:
+    """Append one row per mode to a persistent benchmark log. Creates the
+    file (and parent dir) with a header on first write; appends after."""
+    csv_path = Path(path)
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    is_new = not csv_path.exists()
+    timestamp = datetime.now(UTC).isoformat(timespec="seconds")
+    with open(csv_path, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
+        if is_new:
+            writer.writeheader()
+        def _or_blank(value: float | None) -> float | str:
+            return value if value is not None else ""
+
+        for mode in report.modes:
+            writer.writerow(
+                {
+                    "timestamp": timestamp,
+                    "run_seed": report.run_seed,
+                    "model": report.model or "",
+                    "provider_pin": report.provider_pin or "",
+                    "dice_per_player": report.dice_per_player,
+                    "matches": mode.matches,
+                    "susceptibility_on": mode.susceptibility_on,
+                    "npc_wins": mode.npc_wins,
+                    "decisions": mode.decisions,
+                    "mean_deviation_price": mode.mean_deviation_price,
+                    "optimal_move_rate": mode.optimal_move_rate,
+                    "fallbacks": mode.fallbacks,
+                    "reprompts": mode.reprompts,
+                    "prompt_tokens": mode.prompt_tokens,
+                    "cached_tokens": mode.cached_tokens,
+                    "completion_tokens": mode.completion_tokens,
+                    "cache_hit_rate": _or_blank(mode.cache_hit_rate),
+                    "latency_mean_s": _or_blank(mode.latency_mean_s),
+                    "latency_min_s": _or_blank(mode.latency_min_s),
+                    "latency_max_s": _or_blank(mode.latency_max_s),
+                    "notes": notes,
+                }
+            )
 
 
 def main() -> None:
@@ -362,6 +466,12 @@ def main() -> None:
     parser.add_argument("--probe-seed", default="probe 1")
     parser.add_argument("--run-seed", default="openswindle-bench-1")
     parser.add_argument("--json", dest="json_path", default=None, help="also write report JSON")
+    parser.add_argument(
+        "--csv", dest="csv_path", default=None, help="append a row per mode to this CSV file"
+    )
+    parser.add_argument(
+        "--notes", default="", help="free-text note stored alongside --csv rows"
+    )
     parser.add_argument(
         "--verbose", action="store_true", help="print every turn as it is played"
     )
@@ -383,6 +493,9 @@ def main() -> None:
         with open(args.json_path, "w") as f:
             json.dump(dataclasses.asdict(report), f, indent=2)
         print(f"report written to {args.json_path}")
+    if args.csv_path:
+        append_csv(args.csv_path, report, notes=args.notes)
+        print(f"appended to {args.csv_path}")
 
 
 if __name__ == "__main__":

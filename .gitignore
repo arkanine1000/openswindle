@@ -25,3 +25,6 @@ build/
 AGENTS.md
 CHANGELOG.md
 openswindle-web
+
+# Benchmark run history (local, not shipped)
+benchmarks/
