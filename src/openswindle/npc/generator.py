@@ -129,7 +129,7 @@ def generate_npc(seed: str, locale: Locale = FALLBACK) -> NPCProfile:
         deception=rng.randint(0, 10) / 10,
         skepticism=rng.randint(0, 10) / 10,
         aggression=rng.randint(0, 10) / 10,
-        chattiness=rng.randint(0, 10) / 10,
+        chattiness=max(rng.randint(0, 10) / 10, 0.1),
     )
 
     # Bio second, conditioned on the parameters. Draw name + profession by index
