@@ -173,6 +173,7 @@ def _base_client():
     return AsyncOpenAI(
         base_url=settings.openrouter_base_url,
         api_key=settings.openrouter_api_key,
+        timeout=settings.llm_timeout_seconds,
         default_headers={
             "HTTP-Referer": "https://github.com/arkanine1000/openswindle",
             "X-Title": "OpenSwindle",

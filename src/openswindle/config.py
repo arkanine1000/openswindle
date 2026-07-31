@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     mock_llm: bool = False
     cors_origins: str = "http://localhost:5174"
     llm_max_reprompts: int = 2
+    # Per-request HTTP timeout for the OpenRouter client — the SDK default
+    # (600s) is a batch-workload number, not a live-turn one. See
+    # CHANGELOG.md for the incident and the number this is tuned against.
+    llm_timeout_seconds: float = 45.0
     # Hard per-match ceiling on NPC decisions, independent of which model is
     # in play. A round's bid space is a strict total order over (quantity,
     # face) pairs, so it can have at most total_dice*4 moves before a call is

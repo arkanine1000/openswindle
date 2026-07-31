@@ -205,6 +205,7 @@ progress — which stings more with a person waiting than with an NPC.
 | `OPENSWINDLE_MOCK_LLM` | `false` | Use the scripted policy instead of an LLM (offline dev/tests) |
 | `OPENSWINDLE_LLM_EXTRA_BODY` | — | JSON merged into every LLM request; `.env.example` ships `{"reasoning": {"effort": "none"}}` (cheaper, faster first token, beatable opponent) |
 | `OPENSWINDLE_LLM_MAX_CALLS_PER_MATCH` | `320` | Hard per-match cap on NPC decisions (cost/abuse control); falls back to the scripted policy once hit |
+| `OPENSWINDLE_LLM_TIMEOUT_SECONDS` | `45` | Per-request OpenRouter timeout; bounds a stuck provider's delay before falling back to the scripted policy |
 | `OPENSWINDLE_CORS_ORIGINS` | `http://localhost:5174` | Allowed frontend origins (comma-separated) |
 | `OPENSWINDLE_FINISHED_MATCH_TTL_SECONDS` | `3600` | Finished-match retention time in memory |
 | `OPENSWINDLE_MAX_FINISHED_MATCHES` | `1000` | Maximum finished matches retained before pruning oldest |
