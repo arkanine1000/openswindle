@@ -52,31 +52,10 @@ OpponentType = Literal["llm", "scripted", "human"]
 # the server call an arbitrary model. Verify pricing/slugs at
 # openrouter.ai/models before adding or removing an entry.
 #
-# poolside/laguna-xs-2.1 was tried and dropped: a narrow coding-specialist
-# model, it handled non-English locales (hr) poorly. Prefer general-purpose
-# models here, not code-focused ones, given the locale requirement.
-#
-# minimax/minimax-m2.7 was also tried and dropped: its endpoint mandates
-# reasoning and rejects settings.llm_extra_body's unified disable outright,
-# and it's a shakier model besides. Revisit reasoning-mandatory models only
-# once that's a deliberate, supported case rather than a one-off workaround.
-#
-# google/gemini-3.5-flash-lite was also dropped: same reasoning-mandatory
-# issue as minimax-m2.7 above — it errors out on reasoning effort "none".
-#
-# qwen/qwen3.5-flash-02-23 was dropped after a 50-match benchmark against a
-# scripted probe: 60% win rate versus 84-90% for the rest of the allowlist,
-# 0% prompt cache hit rate against 50%+ for its peers, and by far the
-# heaviest reprompt count — it struggles to propose legal moves, not just to
-# play well.
-#
-# deepseek/deepseek-v4-flash-0731 was added alongside the stable release
-# after a paired 50-match benchmark: identical win rate (42/50, 84%), but
-# lower discipline overhead (0 fallbacks vs 1, 2 reprompts vs 8, 75.6% vs
-# 50.6% cache hit rate) and a lower optimal-move rate (52.7% vs 60.7%) —
-# more willing to deviate from the probability-optimal bid, which reads as
-# more unpredictable/interesting bidding rather than worse play, given the
-# tied win rate. Kept as a separate option rather than a replacement.
+# Dropped candidates (laguna-xs-2.1, minimax-m2.7, gemini-3.5-flash-lite,
+# qwen3.5-flash-02-23) and the deepseek-v4-flash-0731 benchmark that earned
+# its spot here are written up in CHANGELOG.md, not here — see that file for
+# the reasoning and numbers behind this list.
 LLMModel = Literal[
     "deepseek/deepseek-v4-flash",
     "deepseek/deepseek-v4-flash-0731",
@@ -86,19 +65,9 @@ LLMModel = Literal[
 
 # Per-model OpenRouter provider routing, merged into the request's "provider"
 # field when present (see npc/llm.py). Pinning bypasses OpenRouter's default
-# routing, which favors whichever upstream is cheapest/fastest at request
-# time — for BYOK'd providers that means it won't reliably pick the keyed
-# endpoint even when one is configured, so BYOK savings and behavior aren't
-# realized unless the request pins it explicitly.
-#
-# deepseek/deepseek-v4-flash is pinned to the "DeepSeek" endpoint (its native
-# host) after a paired 5-match benchmark against default routing: better
-# decision quality (mean deviation 0.127 vs 0.205, optimal-move rate 68.8%
-# vs 57.1%) and lower latency (mean 4.84s vs 5.82s, max 8.20s vs 13.10s),
-# plus BYOK billing lands on the DeepSeek account instead of OpenRouter
-# credits. Small sample — revisit if a larger run tells a different story.
-# deepseek-v4-flash-0731 is pinned the same way for the same reason — both
-# DeepSeek slugs were benchmarked against the DeepSeek-native endpoint.
+# routing, which won't reliably pick a BYOK'd endpoint even when one is
+# configured. Both DeepSeek slugs are pinned to their native "DeepSeek"
+# endpoint — benchmark rationale in CHANGELOG.md.
 MODEL_PROVIDER_ROUTING: dict[str, dict] = {
     "deepseek/deepseek-v4-flash": {"order": ["DeepSeek"], "allow_fallbacks": False},
     "deepseek/deepseek-v4-flash-0731": {"order": ["DeepSeek"], "allow_fallbacks": False},
