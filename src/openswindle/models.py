@@ -173,15 +173,15 @@ class PublicMatchView(BaseModel):
 class ScoredMove(BaseModel):
     move: Move
     truth_probability: float
-    optimal: bool = False
+    safest: bool = False
 
 
 class ProbabilityMenu(BaseModel):
     moves: list[ScoredMove]
 
     @property
-    def optimal_move(self) -> ScoredMove:
-        return next(m for m in self.moves if m.optimal)
+    def safest_move(self) -> ScoredMove:
+        return next(m for m in self.moves if m.safest)
 
 
 # ---------------------------------------------------------------------------
@@ -257,9 +257,9 @@ def reveal_event(reveal: RoundReveal, locale: Locale = FALLBACK) -> TranscriptEv
 class DecisionRecord(BaseModel):
     round_no: int
     chosen_move: Move
-    optimal_move: Move
+    safest_move: Move
     chosen_probability: float
-    optimal_probability: float
+    safest_probability: float
     deviation_price: float
     scratchpad: str
     table_talk: str

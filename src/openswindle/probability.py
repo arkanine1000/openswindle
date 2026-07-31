@@ -6,9 +6,10 @@ For a bid of ``q`` × ``face`` the truth probability is
 
     P(bid met) = P(Binom(n_opp, 1/4) >= q - own_count_of_face)
 
-and a call's win probability is 1 - P(current bid met). "Optimal" is the
-legal move with the highest such probability; deviation pricing is the
-delta against it.
+and a call's win probability is 1 - P(current bid met). "Safest" is the
+legal move with the highest such probability — the least likely to be
+wrong on the numbers alone, not a game-theoretically optimal strategy.
+Deviation pricing is the delta against it.
 """
 
 from functools import lru_cache
@@ -47,7 +48,7 @@ def legal_raises(current_bid: Bid | None, total_dice: int) -> list[Bid]:
 def build_menu(
     current_bid: Bid | None, own_hand: list[int], opponent_dice: int
 ) -> ProbabilityMenu:
-    """Score every legal move and flag the optimal one."""
+    """Score every legal move and flag the safest one."""
     total_dice = len(own_hand) + opponent_dice
     own_counts = {face: own_hand.count(face) for face in (1, 2, 3, 4)}
     moves: list[ScoredMove] = [
@@ -66,7 +67,7 @@ def build_menu(
             )
         )
     best = max(range(len(moves)), key=lambda i: moves[i].truth_probability)
-    moves[best].optimal = True
+    moves[best].safest = True
     return ProbabilityMenu(moves=moves)
 
 

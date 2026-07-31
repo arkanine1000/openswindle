@@ -19,7 +19,6 @@ async def test_scripted_benchmark_is_reproducible():
     assert mode.matches == 2
     assert mode.decisions > 0
     assert mode.total_deviation_price >= 0
-    assert 0.0 <= mode.optimal_move_rate <= 1.0
     assert first.susceptibility_price_delta is None
     assert first.model is None
 

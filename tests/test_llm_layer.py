@@ -148,6 +148,7 @@ async def test_payload_never_leaks_probability_engine(monkeypatch, game):
     state, profile, own, menu, transcript = game
     text = json.dumps(calls[0]["messages"])
     assert "optimal" not in text.lower()
+    assert "safest" not in text.lower()
     assert "menu" not in text.lower()
     for scored in menu.moves:
         assert f"{scored.truth_probability:.3f}" not in text

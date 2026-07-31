@@ -2,7 +2,7 @@
 
 Plays seeded matches with a scripted probe in the human seat and aggregates
 the telemetry the API records per match: deviation pricing against the
-optimal move, discipline (fallbacks, reprompts), and token usage. The probe
+safest move, discipline (fallbacks, reprompts), and token usage. The probe
 emits claim-bearing table talk — half plain truths about its own hand, half
 confident nonsense — so the susceptibility channel has something to bite on;
 running with --susceptibility both plays the same salted deals with the
@@ -70,7 +70,6 @@ class ModeReport:
     decisions: int
     total_deviation_price: float
     mean_deviation_price: float
-    optimal_move_rate: float
     fallbacks: int
     reprompts: int
     prompt_tokens: int
@@ -266,7 +265,6 @@ def _aggregate(
     decisions = [d for _, match_decisions, _ in results for d in match_decisions]
     latencies = [lat for _, _, match_latencies in results for lat in match_latencies]
     total_price = sum(d.deviation_price for d in decisions)
-    optimal = sum(1 for d in decisions if d.deviation_price <= 1e-9)
     prompt = sum(d.prompt_tokens or 0 for d in decisions)
     cached = sum(d.cached_tokens or 0 for d in decisions)
     return ModeReport(
@@ -276,7 +274,6 @@ def _aggregate(
         decisions=len(decisions),
         total_deviation_price=round(total_price, 4),
         mean_deviation_price=round(total_price / max(len(decisions), 1), 4),
-        optimal_move_rate=round(optimal / max(len(decisions), 1), 4),
         fallbacks=sum(1 for d in decisions if d.fallback),
         reprompts=sum(d.reprompts for d in decisions),
         prompt_tokens=prompt,
@@ -363,7 +360,6 @@ def _print_report(report: BenchmarkReport) -> None:
             f"susceptibility={'on ' if mode.susceptibility_on else 'off'}: "
             f"npc won {mode.npc_wins}/{mode.matches} | {mode.decisions} decisions | "
             f"mean deviation {mode.mean_deviation_price:.4f} | "
-            f"optimal {mode.optimal_move_rate:.1%} | "
             f"fallbacks {mode.fallbacks} | reprompts {mode.reprompts}"
         )
         if mode.prompt_tokens:
@@ -395,7 +391,6 @@ CSV_COLUMNS = [
     "npc_wins",
     "decisions",
     "mean_deviation_price",
-    "optimal_move_rate",
     "fallbacks",
     "reprompts",
     "prompt_tokens",
@@ -436,7 +431,6 @@ def append_csv(path: str, report: BenchmarkReport, notes: str = "") -> None:
                     "npc_wins": mode.npc_wins,
                     "decisions": mode.decisions,
                     "mean_deviation_price": mode.mean_deviation_price,
-                    "optimal_move_rate": mode.optimal_move_rate,
                     "fallbacks": mode.fallbacks,
                     "reprompts": mode.reprompts,
                     "prompt_tokens": mode.prompt_tokens,

@@ -23,18 +23,18 @@ def price_decision(
     cached_tokens: int | None = None,
     completion_tokens: int | None = None,
 ) -> DecisionRecord:
-    """Price a decision: the win-probability delta vs the optimal move."""
-    optimal = menu.optimal_move
+    """Price a decision: the win-probability delta vs the safest move."""
+    safest = menu.safest_move
     chosen = find_scored(menu, decision.move)
     if chosen is None:  # Defensive: callers validate legality before pricing.
         raise ValueError(f"Cannot price an illegal move: {decision.move}")
     return DecisionRecord(
         round_no=round_no,
         chosen_move=decision.move,
-        optimal_move=optimal.move,
+        safest_move=safest.move,
         chosen_probability=chosen.truth_probability,
-        optimal_probability=optimal.truth_probability,
-        deviation_price=optimal.truth_probability - chosen.truth_probability,
+        safest_probability=safest.truth_probability,
+        deviation_price=safest.truth_probability - chosen.truth_probability,
         scratchpad=decision.scratchpad,
         table_talk=decision.table_talk,
         susceptibility_on=susceptibility_on,

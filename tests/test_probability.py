@@ -39,7 +39,7 @@ def test_legal_raises_strictness():
 def test_menu_opening_has_no_call():
     menu = probability.build_menu(None, [1, 2, 3, 4], 4)
     assert all(m.move.action == "bid" for m in menu.moves)
-    assert sum(1 for m in menu.moves if m.optimal) == 1
+    assert sum(1 for m in menu.moves if m.safest) == 1
 
 
 def test_menu_call_probability_complements_bid():
