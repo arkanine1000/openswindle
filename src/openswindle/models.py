@@ -69,8 +69,17 @@ OpponentType = Literal["llm", "scripted", "human"]
 # 0% prompt cache hit rate against 50%+ for its peers, and by far the
 # heaviest reprompt count — it struggles to propose legal moves, not just to
 # play well.
+#
+# deepseek/deepseek-v4-flash-0731 was added alongside the stable release
+# after a paired 50-match benchmark: identical win rate (42/50, 84%), but
+# lower discipline overhead (0 fallbacks vs 1, 2 reprompts vs 8, 75.6% vs
+# 50.6% cache hit rate) and a lower optimal-move rate (52.7% vs 60.7%) —
+# more willing to deviate from the probability-optimal bid, which reads as
+# more unpredictable/interesting bidding rather than worse play, given the
+# tied win rate. Kept as a separate option rather than a replacement.
 LLMModel = Literal[
     "deepseek/deepseek-v4-flash",
+    "deepseek/deepseek-v4-flash-0731",
     "z-ai/glm-5.2",
     "moonshotai/kimi-k2.6",
 ]
@@ -88,8 +97,11 @@ LLMModel = Literal[
 # vs 57.1%) and lower latency (mean 4.84s vs 5.82s, max 8.20s vs 13.10s),
 # plus BYOK billing lands on the DeepSeek account instead of OpenRouter
 # credits. Small sample — revisit if a larger run tells a different story.
+# deepseek-v4-flash-0731 is pinned the same way for the same reason — both
+# DeepSeek slugs were benchmarked against the DeepSeek-native endpoint.
 MODEL_PROVIDER_ROUTING: dict[str, dict] = {
     "deepseek/deepseek-v4-flash": {"order": ["DeepSeek"], "allow_fallbacks": False},
+    "deepseek/deepseek-v4-flash-0731": {"order": ["DeepSeek"], "allow_fallbacks": False},
 }
 
 
