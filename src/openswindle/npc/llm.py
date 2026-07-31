@@ -22,6 +22,7 @@ from pydantic import ValidationInfo, model_validator
 from ..config import get_settings
 from ..i18n import FALLBACK, Locale, s, system_prompt
 from ..models import (
+    MODEL_PROVIDER_ROUTING,
     LLMDecision,
     NPCProfile,
     ProbabilityMenu,
@@ -244,8 +245,11 @@ async def decide(
         # locale reaches the validator so reprompts are in the match's language.
         "context": {"menu": menu, "round_state": round_state, "locale": locale},
     }
-    if settings.llm_extra_body_dict:
-        request["extra_body"] = settings.llm_extra_body_dict
+    extra_body = dict(settings.llm_extra_body_dict)
+    if model in MODEL_PROVIDER_ROUTING:
+        extra_body["provider"] = MODEL_PROVIDER_ROUTING[model]
+    if extra_body:
+        request["extra_body"] = extra_body
 
     try:
         decision = await client.chat.completions.create(**request)

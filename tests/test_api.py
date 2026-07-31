@@ -109,12 +109,12 @@ async def test_llm_model_choice_reaches_the_autopsy(client):
         dice_per_player=2,
         opponent_type="llm",
         npc_seed="seed 4471",
-        llm_model="qwen/qwen3.5-flash-02-23",
+        llm_model="moonshotai/kimi-k2.6",
     )
     match_id = created["match_id"]
     await _finish_match_as_a(client, created)
     autopsy = await client.get(f"/matches/{match_id}/autopsy")
-    assert autopsy.json()["llm_model"] == "qwen/qwen3.5-flash-02-23"
+    assert autopsy.json()["llm_model"] == "moonshotai/kimi-k2.6"
 
 
 async def test_llm_call_budget_exhausted_falls_back_to_scripted(client, monkeypatch):

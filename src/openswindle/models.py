@@ -60,13 +60,37 @@ OpponentType = Literal["llm", "scripted", "human"]
 # reasoning and rejects settings.llm_extra_body's unified disable outright,
 # and it's a shakier model besides. Revisit reasoning-mandatory models only
 # once that's a deliberate, supported case rather than a one-off workaround.
+#
+# google/gemini-3.5-flash-lite was also dropped: same reasoning-mandatory
+# issue as minimax-m2.7 above — it errors out on reasoning effort "none".
+#
+# qwen/qwen3.5-flash-02-23 was dropped after a 50-match benchmark against a
+# scripted probe: 60% win rate versus 84-90% for the rest of the allowlist,
+# 0% prompt cache hit rate against 50%+ for its peers, and by far the
+# heaviest reprompt count — it struggles to propose legal moves, not just to
+# play well.
 LLMModel = Literal[
     "deepseek/deepseek-v4-flash",
-    "qwen/qwen3.5-flash-02-23",
     "z-ai/glm-5.2",
-    "google/gemini-3.5-flash-lite",
     "moonshotai/kimi-k2.6",
 ]
+
+# Per-model OpenRouter provider routing, merged into the request's "provider"
+# field when present (see npc/llm.py). Pinning bypasses OpenRouter's default
+# routing, which favors whichever upstream is cheapest/fastest at request
+# time — for BYOK'd providers that means it won't reliably pick the keyed
+# endpoint even when one is configured, so BYOK savings and behavior aren't
+# realized unless the request pins it explicitly.
+#
+# deepseek/deepseek-v4-flash is pinned to the "DeepSeek" endpoint (its native
+# host) after a paired 5-match benchmark against default routing: better
+# decision quality (mean deviation 0.127 vs 0.205, optimal-move rate 68.8%
+# vs 57.1%) and lower latency (mean 4.84s vs 5.82s, max 8.20s vs 13.10s),
+# plus BYOK billing lands on the DeepSeek account instead of OpenRouter
+# credits. Small sample — revisit if a larger run tells a different story.
+MODEL_PROVIDER_ROUTING: dict[str, dict] = {
+    "deepseek/deepseek-v4-flash": {"order": ["DeepSeek"], "allow_fallbacks": False},
+}
 
 
 class MatchConfig(BaseModel):
