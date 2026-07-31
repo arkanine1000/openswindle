@@ -46,6 +46,7 @@ class LLMOutcome:
     prompt_tokens: int | None = None
     cached_tokens: int | None = None
     completion_tokens: int | None = None
+    cost_usd: float | None = None
 
 
 # NOTE: Instructor embeds this class's docstring in the schema shown to the
@@ -149,7 +150,7 @@ def _turn_block(
     return header + stance
 
 
-def _accumulate_usage(totals: dict[str, int], response) -> None:
+def _accumulate_usage(totals: dict[str, float], response) -> None:
     usage = getattr(response, "usage", None)
     if usage is None:
         return
@@ -157,6 +158,10 @@ def _accumulate_usage(totals: dict[str, int], response) -> None:
     totals["completion"] += getattr(usage, "completion_tokens", 0) or 0
     details = getattr(usage, "prompt_tokens_details", None)
     totals["cached"] += (getattr(details, "cached_tokens", 0) or 0) if details else 0
+    # OpenRouter-specific extension, not part of the OpenAI schema — actual
+    # billed USD for this call (0 for BYOK'd requests, since billing then
+    # happens on the provider's own account instead of OpenRouter credits).
+    totals["cost"] += getattr(usage, "cost", 0) or 0
 
 
 def _base_client():
@@ -197,7 +202,7 @@ async def decide(
     # Deferred import: instructor is heavy, and mock mode should stay instant.
     import instructor
 
-    usage_totals = {"prompt": 0, "cached": 0, "completion": 0}
+    usage_totals = {"prompt": 0, "cached": 0, "completion": 0, "cost": 0.0}
     rejections = 0
 
     # Meter usage at the transport boundary — exactly one accumulation per
@@ -263,6 +268,7 @@ async def decide(
             prompt_tokens=usage_totals["prompt"] if made_calls else None,
             cached_tokens=usage_totals["cached"] if made_calls else None,
             completion_tokens=usage_totals["completion"] if made_calls else None,
+            cost_usd=usage_totals["cost"] if made_calls else None,
         )
 
     return LLMOutcome(
@@ -271,4 +277,5 @@ async def decide(
         prompt_tokens=usage_totals["prompt"],
         cached_tokens=usage_totals["cached"],
         completion_tokens=usage_totals["completion"],
+        cost_usd=usage_totals["cost"],
     )

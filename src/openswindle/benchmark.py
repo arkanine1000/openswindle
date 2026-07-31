@@ -79,6 +79,12 @@ class ModeReport:
     latency_mean_s: float | None
     latency_min_s: float | None
     latency_max_s: float | None
+    # None when no LLM call ever billed (e.g. every call errored before a
+    # response came back); 0.0 is a real value (BYOK bills the provider
+    # account directly, not OpenRouter credits — see MODEL_PROVIDER_ROUTING).
+    cost_usd_total: float | None
+    cost_usd_per_match: float | None
+    cost_usd_per_win: float | None
 
 
 @dataclass
@@ -150,7 +156,7 @@ def _log_move(
 
 async def _play_match(
     options: BenchmarkOptions, match_index: int, susceptibility: bool
-) -> tuple[Seat, list[DecisionRecord], list[float]]:
+) -> tuple[Seat, list[DecisionRecord], list[float], list[float]]:
     npc_seed = f"{options.npc_seed_base} {match_index}"
     config = MatchConfig(
         dice_per_player=options.dice_per_player,
@@ -165,6 +171,7 @@ async def _play_match(
     transcript: list[TranscriptEvent] = []
     decisions: list[DecisionRecord] = []
     latencies: list[float] = []
+    costs: list[float] = []
     # Mirror api._npc_take_turns: the channel only exists for LLM opponents.
     susceptibility_on = options.opponent_type == "llm" and susceptibility
 
@@ -206,6 +213,8 @@ async def _play_match(
         turn_elapsed = time.perf_counter() - turn_started
         if options.opponent_type == "llm":
             latencies.append(turn_elapsed)
+            if outcome.cost_usd is not None:
+                costs.append(outcome.cost_usd)
 
         decision = outcome.decision
         last_probe_talk = next(
@@ -255,22 +264,25 @@ async def _play_match(
         print(f"[sus-{'on' if susceptibility else 'off'} m{match_index + 1}] "
               f"winner: {'npc' if state.winner == NPC_SEAT else 'probe'}", flush=True)
     assert state.winner is not None
-    return state.winner, decisions, latencies
+    return state.winner, decisions, latencies, costs
 
 
 def _aggregate(
     susceptibility_on: bool,
-    results: list[tuple[Seat, list[DecisionRecord], list[float]]],
+    results: list[tuple[Seat, list[DecisionRecord], list[float], list[float]]],
 ) -> ModeReport:
-    decisions = [d for _, match_decisions, _ in results for d in match_decisions]
-    latencies = [lat for _, _, match_latencies in results for lat in match_latencies]
+    decisions = [d for _, match_decisions, _, _ in results for d in match_decisions]
+    latencies = [lat for _, _, match_latencies, _ in results for lat in match_latencies]
+    costs = [c for _, _, _, match_costs in results for c in match_costs]
     total_price = sum(d.deviation_price for d in decisions)
     prompt = sum(d.prompt_tokens or 0 for d in decisions)
     cached = sum(d.cached_tokens or 0 for d in decisions)
+    npc_wins = sum(1 for winner, _, _, _ in results if winner == NPC_SEAT)
+    cost_total = sum(costs) if costs else None
     return ModeReport(
         susceptibility_on=susceptibility_on,
         matches=len(results),
-        npc_wins=sum(1 for winner, _, _ in results if winner == NPC_SEAT),
+        npc_wins=npc_wins,
         decisions=len(decisions),
         total_deviation_price=round(total_price, 4),
         mean_deviation_price=round(total_price / max(len(decisions), 1), 4),
@@ -283,6 +295,13 @@ def _aggregate(
         latency_mean_s=round(sum(latencies) / len(latencies), 2) if latencies else None,
         latency_min_s=round(min(latencies), 2) if latencies else None,
         latency_max_s=round(max(latencies), 2) if latencies else None,
+        cost_usd_total=round(cost_total, 6) if cost_total is not None else None,
+        cost_usd_per_match=round(cost_total / len(results), 6)
+        if cost_total is not None and results
+        else None,
+        cost_usd_per_win=round(cost_total / npc_wins, 6)
+        if cost_total is not None and npc_wins
+        else None,
     )
 
 
@@ -372,6 +391,12 @@ def _print_report(report: BenchmarkReport) -> None:
                 f" | latency mean={mode.latency_mean_s}s"
                 f" min={mode.latency_min_s}s max={mode.latency_max_s}s"
             )
+        if mode.cost_usd_total is not None:
+            line += (
+                f" | cost ${mode.cost_usd_total:.4f} total"
+                f" (${mode.cost_usd_per_match:.4f}/match"
+                f"{f', ${mode.cost_usd_per_win:.4f}/win' if mode.cost_usd_per_win else ''})"
+            )
         print(line)
     if report.susceptibility_price_delta is not None:
         print(
@@ -400,6 +425,9 @@ CSV_COLUMNS = [
     "latency_mean_s",
     "latency_min_s",
     "latency_max_s",
+    "cost_usd_total",
+    "cost_usd_per_match",
+    "cost_usd_per_win",
     "notes",
 ]
 
@@ -440,6 +468,9 @@ def append_csv(path: str, report: BenchmarkReport, notes: str = "") -> None:
                     "latency_mean_s": _or_blank(mode.latency_mean_s),
                     "latency_min_s": _or_blank(mode.latency_min_s),
                     "latency_max_s": _or_blank(mode.latency_max_s),
+                    "cost_usd_total": _or_blank(mode.cost_usd_total),
+                    "cost_usd_per_match": _or_blank(mode.cost_usd_per_match),
+                    "cost_usd_per_win": _or_blank(mode.cost_usd_per_win),
                     "notes": notes,
                 }
             )
